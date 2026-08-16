@@ -1,0 +1,92 @@
+/* Minimal Liberty for the OpenROAD smoke test.
+ *
+ * Two cells with scalar timing is enough to exercise the parser, the netlist
+ * linker and the timing engine without shipping a PDK. This is a self-test
+ * fixture, not a technology library, and it must never be used for anything
+ * that claims a real number.
+ */
+library (smoke) {
+  delay_model : table_lookup;
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  current_unit : "1mA";
+  pulling_resistance_unit : "1kohm";
+  leakage_power_unit : "1nW";
+  capacitive_load_unit (1, pf);
+
+  nom_process : 1.0;
+  nom_temperature : 25.0;
+  nom_voltage : 1.0;
+
+  /* OpenSTA refuses a library with no measurement thresholds (STA-1149). */
+  slew_derate_from_library : 1.0;
+  input_threshold_pct_rise : 50.0;
+  input_threshold_pct_fall : 50.0;
+  output_threshold_pct_rise : 50.0;
+  output_threshold_pct_fall : 50.0;
+  slew_lower_threshold_pct_rise : 20.0;
+  slew_lower_threshold_pct_fall : 20.0;
+  slew_upper_threshold_pct_rise : 80.0;
+  slew_upper_threshold_pct_fall : 80.0;
+
+  default_max_transition : 1.0;
+
+  lu_table_template (scalar) {
+    variable_1 : total_output_net_capacitance;
+    index_1 ("0.0");
+  }
+
+  cell (INV) {
+    area : 1.0;
+    pin (A) {
+      direction : input;
+      capacitance : 0.01;
+    }
+    pin (Y) {
+      direction : output;
+      function : "!A";
+      max_capacitance : 1.0;
+      timing () {
+        related_pin : "A";
+        timing_sense : negative_unate;
+        cell_rise (scalar) { values ("0.05"); }
+        cell_fall (scalar) { values ("0.05"); }
+        rise_transition (scalar) { values ("0.02"); }
+        fall_transition (scalar) { values ("0.02"); }
+      }
+    }
+  }
+
+  cell (AND2) {
+    area : 2.0;
+    pin (A) {
+      direction : input;
+      capacitance : 0.01;
+    }
+    pin (B) {
+      direction : input;
+      capacitance : 0.01;
+    }
+    pin (Y) {
+      direction : output;
+      function : "(A B)";
+      max_capacitance : 1.0;
+      timing () {
+        related_pin : "A";
+        timing_sense : positive_unate;
+        cell_rise (scalar) { values ("0.08"); }
+        cell_fall (scalar) { values ("0.08"); }
+        rise_transition (scalar) { values ("0.03"); }
+        fall_transition (scalar) { values ("0.03"); }
+      }
+      timing () {
+        related_pin : "B";
+        timing_sense : positive_unate;
+        cell_rise (scalar) { values ("0.08"); }
+        cell_fall (scalar) { values ("0.08"); }
+        rise_transition (scalar) { values ("0.03"); }
+        fall_transition (scalar) { values ("0.03"); }
+      }
+    }
+  }
+}

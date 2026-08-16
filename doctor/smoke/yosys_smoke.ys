@@ -1,0 +1,4 @@
+read_verilog and2.v
+synth -top and2
+stat
+write_verilog yosys_out.v

@@ -1,0 +1,12 @@
+RC smoke test
+* A 1k/1u network driven by 1 V settles within 1% of the rail after 5 tau.
+V1 in 0 DC 1
+R1 in out 1k
+C1 out 0 1u
+.tran 1m 5m
+.control
+run
+print v(out)
+quit
+.endc
+.end

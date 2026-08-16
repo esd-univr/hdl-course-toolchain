@@ -305,7 +305,15 @@ RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
 
 COPY container/profile.sh /etc/profile.d/stc-toolchain.sh
 COPY container/entrypoint.sh /opt/toolchain/bin/entrypoint.sh
-RUN chmod 0755 /opt/toolchain/bin/entrypoint.sh /etc/profile.d/stc-toolchain.sh \
+
+# The toolchain self-test. It runs inside the image, needs no network, and is
+# what turns "the tool is on PATH" into "the tool did a job and the answer was
+# right" for the components the course would stand on.
+COPY doctor/ /opt/toolchain/doctor/
+RUN printf '#!/bin/sh\nexec /opt/venv/bin/python3 /opt/toolchain/doctor/toolchain_doctor.py "$@"\n' \
+      > /opt/toolchain/bin/toolchain-doctor \
+ && chmod 0755 /opt/toolchain/bin/entrypoint.sh /opt/toolchain/bin/toolchain-doctor \
+                /etc/profile.d/stc-toolchain.sh \
  && ldconfig
 
 # Record exactly which archive packages this image resolved to. The generic

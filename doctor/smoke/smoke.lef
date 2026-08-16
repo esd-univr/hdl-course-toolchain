@@ -1,0 +1,88 @@
+# Minimal technology + cell LEF for the OpenROAD smoke test.
+#
+# OpenROAD's link_design builds an OpenDB database and refuses to run with no
+# technology (ORD-2010), so a real self-test needs a LEF even when only timing
+# is being checked. One routing layer, one site and two cells is enough to
+# exercise the reader, the database and the linker.
+#
+# This is a self-test fixture, not a technology library. Every dimension here
+# is invented and must never be used for anything that claims a real number.
+
+VERSION 5.8 ;
+BUSBITCHARS "[]" ;
+DIVIDERCHAR "/" ;
+
+UNITS
+  DATABASE MICRONS 1000 ;
+END UNITS
+
+MANUFACTURINGGRID 0.005 ;
+
+LAYER metal1
+  TYPE ROUTING ;
+  DIRECTION HORIZONTAL ;
+  PITCH 0.2 ;
+  WIDTH 0.1 ;
+  SPACING 0.1 ;
+END metal1
+
+SITE core
+  CLASS CORE ;
+  SIZE 0.2 BY 1.0 ;
+END core
+
+MACRO INV
+  CLASS CORE ;
+  ORIGIN 0 0 ;
+  SIZE 0.4 BY 1.0 ;
+  SITE core ;
+  PIN A
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER metal1 ;
+        RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN Y
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER metal1 ;
+        RECT 0.25 0.45 0.35 0.55 ;
+    END
+  END Y
+END INV
+
+MACRO AND2
+  CLASS CORE ;
+  ORIGIN 0 0 ;
+  SIZE 0.6 BY 1.0 ;
+  SITE core ;
+  PIN A
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER metal1 ;
+        RECT 0.05 0.45 0.15 0.55 ;
+    END
+  END A
+  PIN B
+    DIRECTION INPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER metal1 ;
+        RECT 0.05 0.15 0.15 0.25 ;
+    END
+  END B
+  PIN Y
+    DIRECTION OUTPUT ;
+    USE SIGNAL ;
+    PORT
+      LAYER metal1 ;
+        RECT 0.45 0.45 0.55 0.55 ;
+    END
+  END Y
+END AND2
+
+END LIBRARY
