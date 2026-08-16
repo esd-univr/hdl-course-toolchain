@@ -91,12 +91,14 @@ apptainer)
     # disable networking, so --net --network none is what actually denies it.
     network=(--net --network none)
     [ "${ALLOW_NETWORK}" = "no" ] || network=()
+    # Apptainer refuses --env HOME; --home is how it is set, and the src:dest
+    # form makes the workspace the home directory, which keeps HOME identical
+    # to the Docker branch instead of quietly diverging.
     exec apptainer exec \
         --containall \
         "${network[@]}" \
-        --bind "${WORKSPACE}:/work" \
+        --home "${WORKSPACE}:/work" \
         --pwd /work \
-        --env HOME=/work \
         --env TMPDIR=/work/.stc-container/tmp \
         --env XDG_CACHE_HOME=/work/.stc-container/cache \
         "${SIF}" "$@"

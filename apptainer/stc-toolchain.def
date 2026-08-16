@@ -1,0 +1,31 @@
+# Apptainer image for the Systems Testing and Certification toolchain.
+#
+# This deliberately installs nothing. It bootstraps from the docker-archive
+# exported from the OCI image built by toolchain/Containerfile, so there is
+# exactly one toolchain installation to maintain and the two artifacts cannot
+# drift apart. Build it with:
+#
+#     make toolchain-sif
+#
+# which exports the archive first.
+
+Bootstrap: docker-archive
+From: {{ARCHIVE}}
+
+%labels
+    org.opencontainers.image.title       systems-testing-certification-toolchain
+    org.opencontainers.image.description Candidate course toolchain (validation spike)
+    stc.derived-from                     toolchain/Containerfile
+    stc.versions                         toolchain/versions.yml
+
+%environment
+    # Apptainer ignores the OCI ENTRYPOINT, so the entrypoint's environment
+    # setup never runs here. Source the one canonical definition instead of
+    # restating PATH, which is how the two used to drift apart.
+    . /etc/profile.d/stc-toolchain.sh
+
+%runscript
+    exec "$@"
+
+%test
+    /opt/toolchain/bin/toolchain-doctor
