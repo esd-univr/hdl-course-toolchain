@@ -2,6 +2,12 @@
 #
 # requirements.txt next to this file is the generated full lock, and that is
 # what the image installs: the build must not run a dependency resolver.
-# Regenerate with: make toolchain-lock
+# Regenerate with the command in docs/toolchain-container.md.
 cocotb==2.0.1
 pytest==8.4.2
+
+# Required at run time by the Fault candidate, which drives them through
+# PythonKit. They are in the main environment rather than a second venv
+# because PythonKit resolves one interpreter; if Fault is dropped, drop these.
+pyverilog==1.3.0
+nl2bench==0.13.0

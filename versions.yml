@@ -313,6 +313,51 @@ tools:
     archive_file: openroad.deb
     arch: "linux/amd64 only"
 
+
+  - name: swift
+    arg: SWIFT_VERSION
+    version: "5.9.2"
+    source: https://download.swift.org (ubuntu2204 tarball)
+    arch: "amd64 and aarch64 tarballs both published for ubuntu22.04"
+    notes: >
+      Build-time only, needed to compile Fault; it does not reach the runtime
+      image, though 108 MB of Swift runtime libraries do. Fault's Package.swift
+      declares swift-tools-version:5.6, but it uses the `exact:` dependency
+      label, which is a Swift 5.7+ manifest feature -- and Swift publishes no
+      Ubuntu 22.04 build for 5.6.3 at all. 5.9.2 is the pin that was actually
+      verified to build it.
+
+  - name: swift-archive
+    arg: SWIFT_SHA256
+    version: "6407e39eed7eaefcf7837d192d71765fb0f7cf8bf282c35b021171e8b15617c1"
+    source: SHA-256 of the Swift 5.9.2 ubuntu22.04 toolchain
+    archive_url: https://download.swift.org/swift-5.9.2-release/ubuntu2204/swift-5.9.2-RELEASE/swift-5.9.2-RELEASE-ubuntu22.04.tar.gz
+    archive_file: swift.tar.gz
+    arch: "linux/amd64"
+
+  - name: fault
+    arg: FAULT_REF
+    version: "0.9.4"
+    source: https://github.com/AUCOHL/Fault
+    arch: "linux/amd64 verified; no binary published for any architecture"
+    notes: >
+      TECHNICAL DEBT, and the least reproducible thing in this image. Fault's
+      Package.swift pins only PythonKit exactly; swift-collections, Defile,
+      BigInt, Yams and swift-argument-parser are all declared as open ranges,
+      so two builds of the same Fault tag can resolve different dependency
+      versions. Upstream's supported install path is Nix, which is out of
+      scope here. It also needs PYTHON_LIBRARY pointed at libpython, plus
+      pyverilog and nl2bench in the interpreter it drives through PythonKit,
+      and it shells out to Yosys and Icarus Verilog at run time.
+
+  - name: fault-archive
+    arg: FAULT_SHA256
+    version: "41c35e33a0240f64dd5b75a2b61ea3f8387dff55c7dbd97f114be79e4097f2b7"
+    source: SHA-256 of the Fault 0.9.4 source archive
+    archive_url: https://github.com/AUCOHL/Fault/archive/refs/tags/0.9.4.tar.gz
+    archive_file: fault.tar.gz
+    arch: "not architecture specific: source"
+
   # --- source archive integrity pins ---------------------------------------
 
   - name: icarus-verilog-archive

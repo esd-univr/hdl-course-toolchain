@@ -223,6 +223,56 @@ RUN /opt/cargo/bin/cargo install quaigh --version "${QUAIGH_VERSION}" \
  && rm -f /dest/usr/local/.crates.toml /dest/usr/local/.crates2.json
 
 # -----------------------------------------------------------------------------
+# Stage: builder-fault -- Fault, an ATPG / fault-simulation candidate.
+#
+# Fault is written in Swift and upstream's supported install path is Nix, which
+# is out of scope here, so it is built from source against an official Swift
+# toolchain. The toolchain is build-time only; only the binary and the Swift
+# runtime libraries reach the runtime image.
+#
+# The outcome is recorded rather than allowed to abort the build: this is a
+# candidate, and a kitchen sink that fails entirely because one experimental
+# tool broke would tell us less than one that reports which tool broke.
+# -----------------------------------------------------------------------------
+FROM base AS builder-fault
+ARG SWIFT_VERSION
+ARG SWIFT_SHA256
+ARG FAULT_REF
+ARG FAULT_SHA256
+
+# Swift needs a C toolchain to link; without gcc it fails while compiling the
+# package manifest itself, with an error that looks nothing like the cause.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential binutils libc6-dev libcurl4-openssl-dev libedit2 \
+        libpython3.10 libsqlite3-0 libxml2-dev libz3-4 pkg-config tzdata \
+        unzip zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY container/fetch.sh /usr/local/bin/fetch.sh
+COPY .out/sources/swift.tar.gz .out/sources/fault.tar.gz /src/archives/
+RUN chmod 0755 /usr/local/bin/fetch.sh
+
+RUN set -eu; \
+    status=/dest/opt/toolchain/status/fault.status; \
+    log=/dest/opt/toolchain/report/fault.log; \
+    mkdir -p /dest/opt/toolchain/status /dest/opt/toolchain/report /dest/opt/fault/bin; \
+    { \
+      echo "=== Fault ${FAULT_REF} against Swift ${SWIFT_VERSION} ==="; \
+      fetch.sh --local "${SWIFT_SHA256}" /src/archives/swift.tar.gz /opt/swift --strip-components=2; \
+      fetch.sh --local "${FAULT_SHA256}" /src/archives/fault.tar.gz /src/fault --strip-components=1; \
+      export PATH=/opt/swift/bin:${PATH}; \
+      swift --version; \
+      cd /src/fault; \
+      swift build -c release; \
+      cp "$(swift build -c release --show-bin-path)/fault" /dest/opt/fault/bin/fault; \
+      mkdir -p /dest/opt/fault/lib; \
+      cp -a /opt/swift/lib/swift/linux/. /dest/opt/fault/lib/; \
+    } > "${log}" 2>&1 && echo ok > "${status}" || echo failed > "${status}"; \
+    echo "fault: $(cat "${status}")"; \
+    tail -5 "${log}"
+
+# -----------------------------------------------------------------------------
 # Stage: runtime -- the image that is actually run.
 #
 # It keeps a C++ compiler on purpose. Verilator and cocotb compile the design
@@ -238,6 +288,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential \
         libreadline8 zlib1g libffi8 tcl8.6 libgomp1 perl python3-dev \
+        libpython3.10 libcurl4 libedit2 libsqlite3-0 libxml2 libz3-4 \
         "ngspice=${NGSPICE_APT_VERSION}" \
         "graphviz=${GRAPHVIZ_APT_VERSION}" \
         "gtkwave=${GTKWAVE_APT_VERSION}" \
@@ -267,6 +318,18 @@ ENV VIRTUAL_ENV=/opt/venv \
 
 # Quaigh (candidate).
 COPY --from=builder-rust /dest/ /
+
+# Fault (candidate). May be a recorded failure; the doctor reads the status.
+# PythonKit dlopens libpython at run time and cannot find it unaided, and Fault
+# drives pyverilog and nl2bench through that interpreter -- both are in the
+# toolchain venv, see requirements.in.
+COPY --from=builder-fault /dest/opt/ /opt/
+RUN if [ -x /opt/fault/bin/fault ]; then \
+        echo /opt/fault/lib > /etc/ld.so.conf.d/fault.conf; \
+        ln -sf /opt/fault/bin/fault /usr/local/bin/fault; \
+        ldconfig; \
+    fi
+ENV PYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0
 
 # OpenROAD (candidate), from the only official binary channel. amd64 only: no
 # arm64 asset has ever been published, so on another architecture this records

@@ -1,12 +1,22 @@
-# Generated lock -- do not edit by hand. Regenerate with: make toolchain-lock
-# Direct pins live in requirements.in.
+# Generated lock -- do not edit by hand. Regenerate as described in
+# docs/toolchain-container.md. Direct pins live in requirements.in.
+antlr4-python3-runtime==4.9.3
+click==8.4.2
 cocotb==2.0.1
 exceptiongroup==1.3.1
 find_libpython==0.5.1
+immutabledict==4.3.1
 iniconfig==2.3.0
+Jinja2==3.1.6
+lln-libparse==0.56.0
+MarkupSafe==3.0.3
+nl2bench==0.13.0
 packaging==26.3
 pluggy==1.6.0
+ply==3.11
 Pygments==2.20.0
+pyosys==0.60
 pytest==8.4.2
+pyverilog==1.3.0
 tomli==2.4.1
 typing_extensions==4.16.0
