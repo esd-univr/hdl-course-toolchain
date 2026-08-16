@@ -1,0 +1,36 @@
+# Version manifest for the containerized course toolchain.
+#
+# This is the single source of truth. No version string may be hard-coded in
+# the Containerfile, in a build script, or in the documentation: every pin is
+# written here once and injected as a build argument by scripts/versions.py,
+# which also refuses to let this file and the Containerfile drift apart.
+#
+# Grammar (deliberately narrow, so that reading it needs nothing beyond the
+# Python standard library): top-level scalars, then a single `tools:` list of
+# flat mappings. Values are scalars or `>` folded blocks.
+#
+# Fields:
+#   name     human-readable tool name.
+#   arg      Containerfile ARG that receives this pin. Every ARG the
+#            Containerfile declares must appear here, and vice versa.
+#   version  tag, commit, package version, or release asset identifier.
+#   source   where it comes from.
+#   arch     architecture support as actually discovered by this spike.
+#   notes    reproducibility caveats and technical debt.
+
+manifest_version: 1
+spike: kitchen-sink-toolchain-container
+recorded: 2026-08-16
+
+tools:
+  - name: base-image
+    arg: BASE_IMAGE
+    version: "ubuntu:22.04@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
+    source: docker.io/library/ubuntu
+    arch: "multi-arch index: linux/amd64 and linux/arm64 manifests both present"
+    notes: >
+      Ubuntu 22.04 rather than 24.04 is forced by the OpenROAD binary channel,
+      whose .deb requires libpython3.10 and the pre-t64 libqt5* package names.
+      Ubuntu 24.04 ships Python 3.12 and renamed every Qt5 package to *t64, so
+      that .deb cannot be installed there. Pinned by index digest so the same
+      line resolves for both architectures.
