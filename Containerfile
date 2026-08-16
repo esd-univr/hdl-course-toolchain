@@ -101,6 +101,77 @@ RUN fetch.sh --local "${YOSYS_SHA256}" /src/archives/yosys.tar.gz /src/yosys \
  && make install PREFIX=/usr/local DESTDIR=/dest
 
 # -----------------------------------------------------------------------------
+# Stage: builder-hif -- HIF v1.1.0 from the published sources.
+#
+# Albion's development checkouts are deliberately NOT used: the point of this
+# image is to prove the environment is reproducible from released sources, so
+# the four projects are rebuilt here from pinned, digest-verified archives.
+#
+# Two upstream facts are handled here without patching anything:
+#
+#  1. Every CMakeLists.txt hard-codes set(CMAKE_INSTALL_PREFIX /usr/local)
+#     unconditionally, which overrides -DCMAKE_INSTALL_PREFIX. CMake's
+#     `--install --prefix` overrides it back at install time.
+#  2. hif-muffin FetchContents Galfurian/json at GIT_TAG main -- unpinned. The
+#     pinned source is pre-placed and injected via FETCHCONTENT_SOURCE_DIR_JSON.
+# -----------------------------------------------------------------------------
+FROM base AS builder-hif
+ARG HIF_CORE_REF
+ARG HIF_FRONTEND_REF
+ARG HIF_BACKEND_REF
+ARG HIF_MUFFIN_REF
+ARG HIF_JSON_REF
+ARG HIF_CORE_SHA256
+ARG HIF_FRONTEND_SHA256
+ARG HIF_BACKEND_SHA256
+ARG HIF_MUFFIN_SHA256
+ARG HIF_JSON_SHA256
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential cmake flex bison libpoco-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY container/fetch.sh /usr/local/bin/fetch.sh
+COPY .out/sources/ /src/archives/
+RUN chmod 0755 /usr/local/bin/fetch.sh \
+ && fetch.sh --local "${HIF_CORE_SHA256}"     /src/archives/hif-core.tar.gz     /src/hif-core     --strip-components=1 \
+ && fetch.sh --local "${HIF_FRONTEND_SHA256}" /src/archives/hif-frontend.tar.gz /src/hif-frontend --strip-components=1 \
+ && fetch.sh --local "${HIF_BACKEND_SHA256}"  /src/archives/hif-backend.tar.gz  /src/hif-backend  --strip-components=1 \
+ && fetch.sh --local "${HIF_MUFFIN_SHA256}"   /src/archives/hif-muffin.tar.gz   /src/hif-muffin   --strip-components=1 \
+ && fetch.sh --local "${HIF_JSON_SHA256}"     /src/archives/hif-json.tar.gz     /src/json         --strip-components=1
+
+# hif-core first: the other three link against it.
+RUN cmake -S /src/hif-core -B /src/hif-core/build \
+        -DCMAKE_BUILD_TYPE=Release -DSTRICT_WARNINGS=OFF \
+ && cmake --build /src/hif-core/build -j"$(nproc)" \
+ && cmake --install /src/hif-core/build --prefix /opt/hif
+
+# The other three find hif-core through their cmake/FindHIF.cmake, which
+# searches ${HIF_DIR} first.
+RUN set -eu; \
+    for name in hif-frontend hif-backend hif-muffin; do \
+        echo "=== building ${name} ==="; \
+        cmake -S "/src/${name}" -B "/src/${name}/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSTRICT_WARNINGS=OFF \
+            -DHIF_DIR=/opt/hif \
+            -DFETCHCONTENT_SOURCE_DIR_JSON=/src/json; \
+        cmake --build "/src/${name}/build" -j"$(nproc)"; \
+        cmake --install "/src/${name}/build" --prefix /opt/hif; \
+    done
+
+# Record exactly what was built. The binaries all report "version 1.0.0" even
+# at tag v1.1.0, so these commit pins are the only reliable identity.
+RUN { \
+      echo "hif-core     ${HIF_CORE_REF}"; \
+      echo "hif-frontend ${HIF_FRONTEND_REF}"; \
+      echo "hif-backend  ${HIF_BACKEND_REF}"; \
+      echo "hif-muffin   ${HIF_MUFFIN_REF}"; \
+      echo "json         ${HIF_JSON_REF}"; \
+    } > /opt/hif/BUILD_PINS.txt
+
+# -----------------------------------------------------------------------------
 # Stage: runtime -- the image that is actually run.
 #
 # It keeps a C++ compiler on purpose. Verilator and cocotb compile the design
@@ -122,6 +193,16 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder-eda /dest/ /
+
+# HIF. Poco is a runtime dependency of libhif; the ld.so.conf.d entry is what
+# makes the shared library resolvable without any caller setting
+# LD_LIBRARY_PATH, which is one of the things this spike has to prove.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        libpocofoundation80 libpocoutil80 libpocoxml80 \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=builder-hif /opt/hif/ /opt/hif/
+RUN echo /opt/hif/lib > /etc/ld.so.conf.d/hif.conf && ldconfig
 
 # The Python environment. requirements.txt is a generated full lock, so no
 # dependency resolution happens here and nothing is fetched at run time.

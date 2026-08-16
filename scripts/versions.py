@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 ARG_PATTERN = re.compile(r"^\s*ARG\s+([A-Z0-9_]+)\s*$", re.MULTILINE)
+DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ITEM_INDENT = 2
 FIELD_INDENT = 4
 
@@ -122,10 +123,28 @@ def containerfile_args(path: Path) -> set[str]:
 
 
 def validate(manifest: dict, containerfile: Path) -> list[str]:
-    """Return the drift between the manifest and the Containerfile."""
+    """Return the drift between the manifest and the Containerfile.
+
+    Also checks that a downloadable entry carries a digest as its version. The
+    fetcher treats `version` as the expected SHA-256, so attaching archive_url
+    to an entry whose version is a git ref silently asks it to compare a
+    commit id against a digest -- a mistake that is easy to make when an entry
+    and its integrity pin are written as a pair.
+    """
+    problems = [
+        f"{entry.get('name', entry.get('arg', '<unnamed>'))} has archive_url but its "
+        f"version is not a SHA-256 digest: {entry.get('version', '')!r}"
+        for entry in manifest["tools"]
+        if "archive_url" in entry and not DIGEST_PATTERN.match(entry.get("version", ""))
+    ]
+    problems += [
+        f"{entry.get('name', '<unnamed>')} has archive_url but no archive_file"
+        for entry in manifest["tools"]
+        if "archive_url" in entry and "archive_file" not in entry
+    ]
     pinned = {entry["arg"] for entry in pins(manifest)}
     declared = containerfile_args(containerfile)
-    problems = [
+    problems += [
         f"Containerfile declares ARG {name} with no entry in versions.yml"
         for name in sorted(declared - pinned)
     ]

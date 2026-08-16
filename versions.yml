@@ -126,6 +126,113 @@ tools:
       run time.
 
 
+
+  # --- HIF, built from the published v1.1.0 sources ---------------------------
+  #
+  # Albion's development checkouts are deliberately not used. The point of this
+  # image is to prove the environment is reproducible from released sources.
+
+  - name: hif-core
+    arg: HIF_CORE_REF
+    version: "776fd245e72c6b1457b28983dd10f8f23a4ae086"
+    source: https://github.com/hif-project/hif-core (published tag v1.1.0)
+    arch: "linux/amd64 verified; linux/arm64 unknown, upstream CI is ubuntu-latest only"
+    notes: >
+      Needs Poco (Foundation, Util, XML). Its CMakeLists hard-codes
+      set(CMAKE_INSTALL_PREFIX /usr/local) unconditionally, which overrides
+      -DCMAKE_INSTALL_PREFIX; `cmake --install --prefix` overrides it back at
+      install time, so no upstream patching is needed.
+
+  - name: hif-core-archive
+    arg: HIF_CORE_SHA256
+    version: "e897f5af06f51f29552839a2606850e8f4b627ae30655138a341419a9033beb9"
+    source: SHA-256 of the hif-core source archive
+    archive_url: https://github.com/hif-project/hif-core/archive/776fd245e72c6b1457b28983dd10f8f23a4ae086.tar.gz
+    archive_file: hif-core.tar.gz
+
+  - name: hif-frontend
+    arg: HIF_FRONTEND_REF
+    version: "6b23a13e730aee9cde33613c3fa0e392ae3d4b2c"
+    source: https://github.com/hif-project/hif-frontend (published tag v1.1.0)
+    arch: "linux/amd64 verified; linux/arm64 unknown"
+    notes: >
+      Provides verilog2hif and vhdl2hif. Needs Flex and Bison.
+
+  - name: hif-frontend-archive
+    arg: HIF_FRONTEND_SHA256
+    version: "c09cf87bfffcbd3075dd2ed86f5fb64ec62d86d53da757daa62b05698328efe9"
+    source: SHA-256 of the hif-frontend source archive
+    archive_url: https://github.com/hif-project/hif-frontend/archive/6b23a13e730aee9cde33613c3fa0e392ae3d4b2c.tar.gz
+    archive_file: hif-frontend.tar.gz
+
+  - name: hif-backend
+    arg: HIF_BACKEND_REF
+    version: "944720fd04d3e3f7fdf04e734bfdaf1a871dd825"
+    source: https://github.com/hif-project/hif-backend (published tag v1.1.0)
+    arch: "linux/amd64 verified; linux/arm64 unknown"
+    notes: >
+      TECHNICAL DEBT -- the tag is ambiguous. The v1.1.0 tag published on
+      GitHub peels to this commit ("Merge branch develop into main for v1.1.0
+      release"), but the development checkout on Albion has a v1.1.0 tag
+      peeling to ef84e391 ("Merge branch main into develop after v1.1.0
+      release"). The tag was moved after release. This image pins the
+      published commit, so anyone comparing against a local checkout will see
+      a different SHA. Upstream should reconcile the two.
+
+  - name: hif-backend-archive
+    arg: HIF_BACKEND_SHA256
+    version: "78c35988e9b9ac9aafa5538fa997532690ab626c4f2c42aed7554e75633549a1"
+    source: SHA-256 of the hif-backend source archive
+    archive_url: https://github.com/hif-project/hif-backend/archive/944720fd04d3e3f7fdf04e734bfdaf1a871dd825.tar.gz
+    archive_file: hif-backend.tar.gz
+
+  - name: hif-muffin
+    arg: HIF_MUFFIN_REF
+    version: "bcd387f7768082cb820ea1eab1560e3276936021"
+    source: https://github.com/hif-project/hif-muffin (published tag v1.1.0)
+    arch: "linux/amd64 verified; linux/arm64 unknown"
+    notes: >
+      Provides muffin. See hif-muffin-json below for its one unpinned
+      dependency.
+
+  - name: hif-muffin-archive
+    arg: HIF_MUFFIN_SHA256
+    version: "316b02dd53c635daeda873be1accab453b88c16ddeb8193b9506879e8eae4912"
+    source: SHA-256 of the hif-muffin source archive
+    archive_url: https://github.com/hif-project/hif-muffin/archive/bcd387f7768082cb820ea1eab1560e3276936021.tar.gz
+    archive_file: hif-muffin.tar.gz
+
+  - name: hif-muffin-json
+    arg: HIF_JSON_REF
+    version: "930f32d755b167b0f11a1fd9c284c75fb2724485"
+    source: https://github.com/Galfurian/json
+    arch: "header-only C++; not architecture specific"
+    notes: >
+      TECHNICAL DEBT. hif-muffin v1.1.0 declares this FetchContent dependency
+      with GIT_TAG main, i.e. unpinned: two builds of the same muffin tag can
+      pull different code. This image pins the commit main pointed at on
+      2026-08-16 and injects it through FETCHCONTENT_SOURCE_DIR_JSON, so
+      upstream is not patched. Upstream should pin the tag.
+
+  - name: hif-muffin-json-archive
+    arg: HIF_JSON_SHA256
+    version: "3fee96271346d0a2d5acd24e33d81b0a24811d04bfd2dc88ba4f5eabbcd21d07"
+    source: SHA-256 of the Galfurian/json source archive
+    archive_url: https://github.com/Galfurian/json/archive/930f32d755b167b0f11a1fd9c284c75fb2724485.tar.gz
+    archive_file: hif-json.tar.gz
+
+  - name: hif-reported-version
+    version: "1.0.0 (as reported by the binaries at tag v1.1.0)"
+    source: observed
+    notes: >
+      Informational, and a real caveat. verilog2hif, hif2verilog and muffin
+      built from the v1.1.0 sources all report "version 1.0.0", and generated
+      files carry the header "Generate with HIF version 1.0.0". The internal
+      version string was not bumped for the 1.1.0 release, so --version cannot
+      be used to tell which HIF release an installation is. The commit pins
+      above are the only reliable identity; the image also records them at
+      /opt/hif/BUILD_PINS.txt.
+
   # --- source archive integrity pins ---------------------------------------
 
   - name: icarus-verilog-archive

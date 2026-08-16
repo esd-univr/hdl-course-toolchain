@@ -135,6 +135,51 @@ class TestValidation(ManifestTestCase):
         self.assertEqual(versions.validate(versions.load(manifest_path), containerfile), [])
 
 
+class TestDownloadableEntries(ManifestTestCase):
+    """A downloadable entry's version is the digest the fetcher compares against.
+
+    Attaching archive_url to an entry whose version is a git ref makes the
+    fetcher compare a commit id against a SHA-256 and fail with a confusing
+    message. This happened once; it should not happen quietly again.
+    """
+
+    MANIFEST_WITH_REF_AS_VERSION = textwrap.dedent(
+        """
+        tools:
+          - name: thing
+            arg: THING_REF
+            version: "776fd245e72c6b1457b28983dd10f8f23a4ae086"
+            source: https://example.invalid
+            archive_url: https://example.invalid/thing.tar.gz
+            archive_file: thing.tar.gz
+        """
+    )
+
+    def test_archive_url_on_a_non_digest_version_is_rejected(self):
+        manifest_path, containerfile = self.write(
+            manifest=self.MANIFEST_WITH_REF_AS_VERSION, containerfile="ARG THING_REF\n"
+        )
+        problems = versions.validate(versions.load(manifest_path), containerfile)
+        self.assertIn("is not a SHA-256 digest", problems[0])
+
+    def test_archive_url_without_archive_file_is_rejected(self):
+        manifest = textwrap.dedent(
+            """
+            tools:
+              - name: thing
+                arg: THING_SHA256
+                version: "3fee96271346d0a2d5acd24e33d81b0a24811d04bfd2dc88ba4f5eabbcd21d07"
+                source: digest
+                archive_url: https://example.invalid/thing.tar.gz
+            """
+        )
+        manifest_path, containerfile = self.write(
+            manifest=manifest, containerfile="ARG THING_SHA256\n"
+        )
+        problems = versions.validate(versions.load(manifest_path), containerfile)
+        self.assertEqual(problems, ["thing has archive_url but no archive_file"])
+
+
 class TestTheRealManifest(unittest.TestCase):
     """The manifest actually shipped must match the Containerfile actually shipped."""
 
