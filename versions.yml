@@ -195,6 +195,14 @@ tools:
       Provides muffin. See hif-muffin-json below for its one unpinned
       dependency.
 
+  - name: hif-muffin-archive-file
+    arg: HIF_MUFFIN_ARCHIVE
+    version: "hif-muffin.tar.gz"
+    source: selects which muffin archive the build consumes
+    notes: >
+      Overridden by `make toolchain-build-hif-develop` to build the develop
+      channel instead. See hif-muffin-develop below for why that option exists.
+
   - name: hif-muffin-archive
     arg: HIF_MUFFIN_SHA256
     version: "316b02dd53c635daeda873be1accab453b88c16ddeb8193b9506879e8eae4912"
@@ -233,6 +241,32 @@ tools:
       above are the only reliable identity; the image also records them at
       /opt/hif/BUILD_PINS.txt.
 
+
+
+  # --- the HIF develop channel, for one specific known defect ------------------
+
+  - name: hif-muffin-develop
+    version: "4c472743b237d54d2130ce98b72b58b1b658ff98"
+    source: https://github.com/hif-project/hif-muffin (develop, 2026-08-16)
+    arch: "linux/amd64 verified"
+    notes: >
+      NOT the default, and not a version the course should adopt casually.
+      It exists because the coordinated v1.1.0 baseline cannot run the existing
+      Lab 00. Muffin v1.1.0 emits instrumented combinational logic as
+      `always @( a, b )`, omitting muffinMutPort from the sensitivity list, so
+      changing the fault selector alone never re-evaluates the process and Lab
+      00's LIVE check fails. Upstream fixed this after the release in
+      hif-muffin 19b7d93, "fix: make instrumented combinational logic sensitive
+      to muffinMutPort" (issue #16, PR #17), and even added a commit reading
+      "docs: build the and2 example against develop, not v1.1.0". Building with
+      this pin is what proves the container infrastructure is sound and the
+      blocker is purely the HIF version.
+
+  - name: hif-muffin-develop-archive
+    version: "cf4809ecdab7787b5a74dbe4808ba37885865a858938f54f93e1478b35999c0b"
+    source: SHA-256 of the hif-muffin develop source archive
+    archive_url: https://github.com/hif-project/hif-muffin/archive/4c472743b237d54d2130ce98b72b58b1b658ff98.tar.gz
+    archive_file: hif-muffin-develop.tar.gz
 
   # --- ATPG / DFT candidates --------------------------------------------------
   #

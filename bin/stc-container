@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Run a command inside the course toolchain image against a mounted workspace.
+#
+# This wrapper is the supported way to launch either engine. It exists to make
+# Docker and Apptainer behave the same, because by default they do not:
+#
+#   - Docker gives the container a writable root layer; a SIF root is
+#     read-only. `--read-only` makes Docker match, so a tool that writes into
+#     the image fails in testing rather than only in front of a student.
+#   - Apptainer ignores the OCI ENTRYPOINT, so environment setup has to be
+#     driven from here and from /etc/profile.d/stc-toolchain.sh.
+#   - `--containall` does NOT disable networking. Only `--net --network none`
+#     does, and it works unprivileged with this Apptainer installation.
+#
+# The bind mount at /work is the only path intended to survive the run. Both
+# engines additionally provide a writable, private, throwaway /tmp; TMPDIR is
+# pointed inside the workspace so that even scratch files are visible and
+# cleanable rather than hidden in the container.
+set -euo pipefail
+
+IMAGE="${STC_IMAGE:-stc-toolchain}"
+TAG="${STC_TAG:-spike}"
+ENGINE="${STC_ENGINE:-docker}"
+SIF="${STC_SIF:-toolchain/.out/stc-toolchain.sif}"
+WORKSPACE=""
+ALLOW_NETWORK="no"
+
+usage() {
+    cat >&2 <<'EOF'
+usage: stc-container [options] -- COMMAND [ARGS...]
+
+  --workspace DIR   host directory to mount at /work (required)
+  --engine ENGINE   docker (default) or apptainer
+  --sif PATH        SIF to use with --engine apptainer
+  --network         allow network access (denied by default, both engines)
+
+Environment: STC_IMAGE, STC_TAG, STC_ENGINE, STC_SIF.
+EOF
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --workspace) WORKSPACE="${2:?--workspace needs a directory}"; shift 2 ;;
+        --engine)    ENGINE="${2:?--engine needs a name}";             shift 2 ;;
+        --sif)       SIF="${2:?--sif needs a path}";                   shift 2 ;;
+        --network)   ALLOW_NETWORK="yes";                              shift ;;
+        --)          shift; break ;;
+        -h|--help)   usage ;;
+        *)           echo "error: unknown option: $1" >&2; usage ;;
+    esac
+done
+
+[ -n "${WORKSPACE}" ] || { echo "error: --workspace is required" >&2; usage; }
+[ $# -gt 0 ]          || { echo "error: no command given" >&2; usage; }
+[ -d "${WORKSPACE}" ] || { echo "error: no such directory: ${WORKSPACE}" >&2; exit 2; }
+WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
+
+# Scratch that a lab or the doctor produces stays inside the workspace, so the
+# claim "only the workspace is modified" is true rather than approximately true.
+SCRATCH="${WORKSPACE}/.stc-container"
+mkdir -p "${SCRATCH}/tmp" "${SCRATCH}/cache"
+
+case "${ENGINE}" in
+docker)
+    network=(--network none)
+    [ "${ALLOW_NETWORK}" = "no" ] || network=()
+    # Running as the invoking user keeps every generated file owned by the
+    # student rather than by root. --read-only makes the root filesystem match
+    # the SIF's; /tmp and /var/tmp are supplied as tmpfs because a read-only
+    # rootfs with no writable temp breaks ordinary tools.
+    exec docker run --rm -i \
+        "${network[@]}" \
+        --read-only \
+        --tmpfs /tmp:rw,nosuid,nodev,exec \
+        --tmpfs /var/tmp:rw,nosuid,nodev \
+        --user "$(id -u):$(id -g)" \
+        --mount "type=bind,source=${WORKSPACE},target=/work" \
+        --workdir /work \
+        --env HOME=/work \
+        --env TMPDIR=/work/.stc-container/tmp \
+        --env XDG_CACHE_HOME=/work/.stc-container/cache \
+        "${IMAGE}:${TAG}" "$@"
+    ;;
+apptainer)
+    if [ ! -f "${SIF}" ]; then
+        echo "error: no SIF at ${SIF}; run 'make toolchain-sif' first" >&2
+        exit 2
+    fi
+    # --containall keeps the host home, /tmp and environment out. It does not
+    # disable networking, so --net --network none is what actually denies it.
+    network=(--net --network none)
+    [ "${ALLOW_NETWORK}" = "no" ] || network=()
+    exec apptainer exec \
+        --containall \
+        "${network[@]}" \
+        --bind "${WORKSPACE}:/work" \
+        --pwd /work \
+        --env HOME=/work \
+        --env TMPDIR=/work/.stc-container/tmp \
+        --env XDG_CACHE_HOME=/work/.stc-container/cache \
+        "${SIF}" "$@"
+    ;;
+*)
+    echo "error: unknown engine: ${ENGINE} (expected docker or apptainer)" >&2
+    exit 2
+    ;;
+esac

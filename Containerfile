@@ -124,6 +124,7 @@ ARG HIF_CORE_REF
 ARG HIF_FRONTEND_REF
 ARG HIF_BACKEND_REF
 ARG HIF_MUFFIN_REF
+ARG HIF_MUFFIN_ARCHIVE
 ARG HIF_JSON_REF
 ARG HIF_CORE_SHA256
 ARG HIF_FRONTEND_SHA256
@@ -138,13 +139,14 @@ RUN apt-get update \
 
 COPY container/fetch.sh /usr/local/bin/fetch.sh
 COPY .out/sources/hif-core.tar.gz .out/sources/hif-frontend.tar.gz \
+     .out/sources/hif-muffin-develop.tar.gz \
      .out/sources/hif-backend.tar.gz .out/sources/hif-muffin.tar.gz \
      .out/sources/hif-json.tar.gz /src/archives/
 RUN chmod 0755 /usr/local/bin/fetch.sh \
  && fetch.sh --local "${HIF_CORE_SHA256}"     /src/archives/hif-core.tar.gz     /src/hif-core     --strip-components=1 \
  && fetch.sh --local "${HIF_FRONTEND_SHA256}" /src/archives/hif-frontend.tar.gz /src/hif-frontend --strip-components=1 \
  && fetch.sh --local "${HIF_BACKEND_SHA256}"  /src/archives/hif-backend.tar.gz  /src/hif-backend  --strip-components=1 \
- && fetch.sh --local "${HIF_MUFFIN_SHA256}"   /src/archives/hif-muffin.tar.gz   /src/hif-muffin   --strip-components=1 \
+ && fetch.sh --local "${HIF_MUFFIN_SHA256}"   "/src/archives/${HIF_MUFFIN_ARCHIVE}"   /src/hif-muffin   --strip-components=1 \
  && fetch.sh --local "${HIF_JSON_SHA256}"     /src/archives/hif-json.tar.gz     /src/json         --strip-components=1
 
 # hif-core first: the other three link against it.
