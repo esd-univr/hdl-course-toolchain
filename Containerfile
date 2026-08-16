@@ -71,7 +71,11 @@ RUN chmod 0755 /usr/local/bin/fetch.sh
 # from the host took seconds. The archives carry their SHA-256 in versions.yml
 # and are verified BOTH by the host fetcher and again here, so a corrupted or
 # substituted archive fails the build rather than producing a mystery binary.
-COPY .out/sources/ /src/archives/
+#
+# Each stage copies only the archives it needs. Copying the whole directory
+# made adding a source for one tool invalidate every other tool's layer.
+COPY .out/sources/iverilog.tar.gz .out/sources/verilator.tar.gz \
+     .out/sources/yosys.tar.gz /src/archives/
 
 # Icarus Verilog.
 RUN fetch.sh --local "${IVERILOG_SHA256}" /src/archives/iverilog.tar.gz \
@@ -133,7 +137,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY container/fetch.sh /usr/local/bin/fetch.sh
-COPY .out/sources/ /src/archives/
+COPY .out/sources/hif-core.tar.gz .out/sources/hif-frontend.tar.gz \
+     .out/sources/hif-backend.tar.gz .out/sources/hif-muffin.tar.gz \
+     .out/sources/hif-json.tar.gz /src/archives/
 RUN chmod 0755 /usr/local/bin/fetch.sh \
  && fetch.sh --local "${HIF_CORE_SHA256}"     /src/archives/hif-core.tar.gz     /src/hif-core     --strip-components=1 \
  && fetch.sh --local "${HIF_FRONTEND_SHA256}" /src/archives/hif-frontend.tar.gz /src/hif-frontend --strip-components=1 \
@@ -170,6 +176,49 @@ RUN { \
       echo "hif-muffin   ${HIF_MUFFIN_REF}"; \
       echo "json         ${HIF_JSON_REF}"; \
     } > /opt/hif/BUILD_PINS.txt
+
+# -----------------------------------------------------------------------------
+# Stage: builder-rust -- Quaigh, an ATPG and logic-optimisation candidate.
+#
+# The Rust toolchain is build-time only and does not reach the runtime image.
+# The retry settings are not decoration: this host's container egress is
+# intermittently flaky, and a single dropped connection would otherwise cost
+# the whole build.
+# -----------------------------------------------------------------------------
+FROM base AS builder-rust
+ARG RUST_VERSION
+ARG QUAIGH_VERSION
+
+# Quaigh's dependency graph reaches openssl-sys, libgit2-sys and libssh2-sys,
+# all of which need system headers and pkg-config to build.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential pkg-config libssl-dev zlib1g-dev cmake \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    CARGO_NET_RETRY=10 \
+    CARGO_HTTP_MULTIPLEXING=false \
+    CARGO_HTTP_LOW_SPEED_LIMIT=1000 \
+    CARGO_HTTP_TIMEOUT=120
+
+RUN set -eu; \
+    attempt=1; \
+    until curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+              --connect-timeout 30 https://sh.rustup.rs -o /tmp/rustup.sh; do \
+        [ "${attempt}" -lt 3 ] || { echo "could not download rustup" >&2; exit 1; }; \
+        attempt=$((attempt + 1)); sleep 10; \
+    done; \
+    sh /tmp/rustup.sh -y --no-modify-path --profile minimal \
+        --default-toolchain "${RUST_VERSION}"; \
+    rm -f /tmp/rustup.sh
+
+# --locked so the crate's own Cargo.lock decides the dependency graph rather
+# than a fresh resolution, which would not be reproducible.
+RUN /opt/cargo/bin/cargo install quaigh --version "${QUAIGH_VERSION}" \
+        --locked --root /dest/usr/local \
+ && rm -f /dest/usr/local/.crates.toml /dest/usr/local/.crates2.json
 
 # -----------------------------------------------------------------------------
 # Stage: runtime -- the image that is actually run.
@@ -213,6 +262,46 @@ RUN python3 -m venv /opt/venv \
 
 ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:/opt/toolchain/bin:/opt/hif/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+
+# Quaigh (candidate).
+COPY --from=builder-rust /dest/ /
+
+# OpenROAD (candidate), from the only official binary channel. amd64 only: no
+# arm64 asset has ever been published, so on another architecture this records
+# "unsupported-arch" and the doctor reports it rather than the tool silently
+# being absent.
+ARG OPENROAD_DEB_RELEASE
+ARG OPENROAD_DEB_SHA256
+COPY .out/sources/openroad.deb /src/archives/openroad.deb
+RUN set -eu; \
+    status=/opt/toolchain/status/openroad.status; \
+    log=/opt/toolchain/report/openroad.log; \
+    architecture="$(dpkg --print-architecture)"; \
+    if [ "${architecture}" != "amd64" ]; then \
+        echo "unsupported-arch" > "${status}"; \
+        printf 'No OpenROAD binary is published for %s; every release asset is amd64.\n' \
+            "${architecture}" > "${log}"; \
+        rm -f /src/archives/openroad.deb; \
+    else \
+        { \
+          actual="$(sha256sum /src/archives/openroad.deb | cut -d' ' -f1)"; \
+          [ "${actual}" = "${OPENROAD_DEB_SHA256}" ] \
+            || { echo "SHA-256 mismatch: ${actual}"; exit 1; }; \
+          echo "openroad release ${OPENROAD_DEB_RELEASE} sha256 ${actual}"; \
+          apt-get update; \
+          apt-get install -y --no-install-recommends /src/archives/openroad.deb; \
+          rm -rf /var/lib/apt/lists/* /src/archives/openroad.deb; \
+        } > "${log}" 2>&1 && echo ok > "${status}" || echo failed > "${status}"; \
+    fi; \
+    echo "openroad: $(cat "${status}")"
+
+# Every candidate reports a status so a partially successful kitchen sink is
+# visible rather than green. The tools whose failure would have aborted the
+# build are recorded as ok here for uniformity.
+RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
+                verilog2hif hif2verilog cocotb pytest graphviz gtkwave; do \
+        echo ok > "/opt/toolchain/status/${tool}.status"; \
+    done
 
 COPY container/profile.sh /etc/profile.d/stc-toolchain.sh
 COPY container/entrypoint.sh /opt/toolchain/bin/entrypoint.sh

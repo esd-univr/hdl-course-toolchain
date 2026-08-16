@@ -233,6 +233,52 @@ tools:
       above are the only reliable identity; the image also records them at
       /opt/hif/BUILD_PINS.txt.
 
+
+  # --- ATPG / DFT candidates --------------------------------------------------
+  #
+  # These are carried by the kitchen-sink image so the spike can find out
+  # whether they package cleanly. The course does not depend on any of them,
+  # and the toolchain doctor reports them as candidates rather than failing.
+
+  - name: rust
+    arg: RUST_VERSION
+    version: "1.90.0"
+    source: https://sh.rustup.rs (static.rust-lang.org)
+    arch: "build-time only; toolchains published for both amd64 and arm64"
+    notes: >
+      Build-time only, needed to compile Quaigh. It does not reach the runtime
+      image.
+
+  - name: quaigh
+    arg: QUAIGH_VERSION
+    version: "0.0.6"
+    source: crates.io (upstream https://github.com/Coloquinte/quaigh)
+    arch: "linux/amd64 verified; linux/arm64 likely, no x86-only intrinsics found in its C deps"
+    notes: >
+      ATPG and logic-optimisation candidate. Installed with --locked so the
+      crate's own Cargo.lock decides the dependency graph rather than a fresh
+      resolution.
+
+  - name: openroad
+    arg: OPENROAD_DEB_RELEASE
+    version: "2024-12-14"
+    source: https://github.com/Precision-Innovations/OpenROAD/releases
+    arch: "linux/amd64 ONLY -- no arm64 asset has ever been published"
+    notes: >
+      The newest release carrying binary assets; the later 26Q1 tag publishes
+      none. This .deb is why the base image is Ubuntu 22.04: it requires
+      libpython3.10 and the pre-t64 libqt5* names, so it cannot be installed on
+      24.04. That choice in turn caps Yosys at 0.66. Verified to install on
+      jammy with no unmet dependencies and no missing shared libraries.
+
+  - name: openroad-deb
+    arg: OPENROAD_DEB_SHA256
+    version: "40ed178396b0276a5d5dfbbe695c9de9aac9088157a6655be02b39a0cef07207"
+    source: SHA-256 of openroad_2.0-17598-ga008522d8_amd64-ubuntu-22.04.deb
+    archive_url: https://github.com/Precision-Innovations/OpenROAD/releases/download/2024-12-14/openroad_2.0-17598-ga008522d8_amd64-ubuntu-22.04.deb
+    archive_file: openroad.deb
+    arch: "linux/amd64 only"
+
   # --- source archive integrity pins ---------------------------------------
 
   - name: icarus-verilog-archive
