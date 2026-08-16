@@ -1,0 +1,5 @@
+# The build context is toolchain/. .out holds build logs, image archives and
+# SIFs, none of which belong in the context -- but the pre-fetched, digest-
+# verified source archives do.
+.out/*
+!.out/sources

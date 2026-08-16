@@ -1,0 +1,7 @@
+# Direct Python pins for the course toolchain.
+#
+# requirements.txt next to this file is the generated full lock, and that is
+# what the image installs: the build must not run a dependency resolver.
+# Regenerate with: make toolchain-lock
+cocotb==2.0.1
+pytest==8.4.2

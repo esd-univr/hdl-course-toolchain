@@ -34,3 +34,132 @@ tools:
       Ubuntu 24.04 ships Python 3.12 and renamed every Qt5 package to *t64, so
       that .deb cannot be installed there. Pinned by index digest so the same
       line resolves for both architectures.
+
+  # --- simulation and synthesis ---------------------------------------------
+
+  - name: icarus-verilog
+    arg: IVERILOG_REF
+    version: "v12_0"
+    source: https://github.com/steveicarus/iverilog (archive refs/tags/v12_0.tar.gz)
+    arch: "unknown for linux/arm64: upstream CI has no aarch64 job"
+    notes: >
+      Source build pinned to the tag. Ubuntu 22.04 packages 11.0, but the
+      native Lab 00 path on the development machine is validated against 12.0,
+      so the container matches that rather than introducing a second variable.
+
+  - name: verilator
+    arg: VERILATOR_REF
+    version: "v5.036"
+    source: https://github.com/verilator/verilator (archive refs/tags/v5.036.tar.gz)
+    arch: "linux/amd64 verified; linux/arm64 tested by upstream CI but not verified here"
+    notes: >
+      Ubuntu 22.04 packages 4.038, which is too old for cocotb 2.x. This is a
+      conservative pin chosen to match the base image's GCC 11 rather than the
+      newest tag; revisit when the course actually commits to Verilator.
+
+  - name: yosys
+    arg: YOSYS_REF
+    version: "v0.66"
+    source: https://github.com/YosysHQ/yosys (release asset yosys-src.tar.gz)
+    arch: "linux/amd64 verified; linux/arm64 tested by upstream CI but not verified here"
+    notes: >
+      NOT the newest release, and the reason matters. Yosys switched to CMake
+      at v0.68, which requires CMake >= 3.28, Bison >= 3.8, Python >= 3.11 and
+      a C++20 compiler; Ubuntu 22.04 provides CMake 3.22 and Python 3.10, and
+      upstream's own README tells 22.04 users to install a newer CMake from
+      snap. v0.66 is the last Makefile-based release and builds on this
+      baseline unchanged. Since Ubuntu 22.04 is itself forced by the OpenROAD
+      .deb, OpenROAD's packaging transitively caps the Yosys version this
+      image can carry -- see docs/toolchain-container.md. Ubuntu 22.04
+      packages Yosys 0.9, so this is still a large step forward. The release
+      tarball vendors abc, so the build needs no second unpinned fetch.
+
+  # --- runtime and analog ----------------------------------------------------
+
+  - name: ngspice
+    arg: NGSPICE_APT_VERSION
+    version: "36+ds-1ubuntu0.1"
+    source: ubuntu-22.04 archive
+    arch: "linux/amd64, linux/arm64"
+    notes: >
+      Pinned to the exact archive version. If Ubuntu publishes a security
+      update the build fails rather than silently changing; update this line.
+
+  - name: graphviz
+    arg: GRAPHVIZ_APT_VERSION
+    version: "2.42.2-6ubuntu0.1"
+    source: ubuntu-22.04 archive
+    arch: "linux/amd64, linux/arm64"
+
+  - name: gtkwave
+    arg: GTKWAVE_APT_VERSION
+    version: "3.3.104-2build1"
+    source: ubuntu-22.04 archive
+    arch: "linux/amd64, linux/arm64"
+
+  # Informational entries carry no `arg` and inject nothing; they record what
+  # the environment resolves to, so the manifest stays a complete description.
+
+  - name: python
+    version: "3.10.12 (ubuntu-22.04 archive)"
+    source: ubuntu-22.04 archive
+    arch: "linux/amd64, linux/arm64"
+    notes: >
+      TECHNICAL DEBT. The interpreter and the other generic base packages
+      (bash, coreutils, make, git, curl, jq) are taken from the live Ubuntu
+      archive and are therefore not byte-reproducible over time: a security
+      update changes them without changing this file. The build records the
+      full dpkg manifest at /opt/toolchain/report/apt-packages.txt inside the
+      image so any given image can still be described exactly. The real fix is
+      to pin the apt sources to a snapshot.ubuntu.com timestamp; that was left
+      out of this spike deliberately to keep one variable at a time. The
+      course-relevant EDA packages above ARE pinned exactly.
+
+  - name: python-packages
+    version: "see toolchain/requirements.txt"
+    source: PyPI
+    arch: "pure Python; no architecture restriction"
+    notes: >
+      cocotb 2.0.1 and pytest 8.4.2 are the direct pins in requirements.in;
+      requirements.txt is the generated full lock and is what the image
+      installs, so the build runs no dependency resolver and needs no index at
+      run time.
+
+
+  # --- source archive integrity pins ---------------------------------------
+
+  - name: icarus-verilog-archive
+    arg: IVERILOG_SHA256
+    version: "a68cb1ef7c017ef090ebedb2bc3e39ef90ecc70a3400afb4aa94303bc3beaa7d"
+    source: SHA-256 of the icarus-verilog source archive
+    arch: "not architecture specific: source"
+    archive_url: https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz
+    archive_file: iverilog.tar.gz
+    notes: >
+      Integrity pin for the iverilog-12_0 source archive. Archives are pinned by digest rather than
+      by tag alone because a tag can be moved and a digest cannot; the build
+      fails loudly if upstream regenerates the archive.
+
+  - name: verilator-archive
+    arg: VERILATOR_SHA256
+    version: "4199964882d56cf6a19ce80c6a297ebe3b0c35ea81106cd4f722342594337c47"
+    source: SHA-256 of the verilator source archive
+    arch: "not architecture specific: source"
+    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.036.tar.gz
+    archive_file: verilator.tar.gz
+    notes: >
+      Integrity pin for the verilator-5.036 source archive. Archives are pinned by digest rather than
+      by tag alone because a tag can be moved and a digest cannot; the build
+      fails loudly if upstream regenerates the archive.
+
+  - name: yosys-archive
+    arg: YOSYS_SHA256
+    version: "ba567ea7fbb1287e996aef8f20fe902f6fd408593aa50cfaea8ae0c9015ab872"
+    source: SHA-256 of the yosys source archive
+    arch: "not architecture specific: source"
+    archive_url: https://github.com/YosysHQ/yosys/releases/download/v0.66/yosys-src.tar.gz
+    archive_file: yosys.tar.gz
+    notes: >
+      Integrity pin for the yosys v0.66 release asset yosys-src.tar.gz (a FLAT archive: do not strip components). Archives are pinned by digest rather than
+      by tag alone because a tag can be moved and a digest cannot; the build
+      fails loudly if upstream regenerates the archive.

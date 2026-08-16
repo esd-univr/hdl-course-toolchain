@@ -142,7 +142,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=root / "versions.yml")
     parser.add_argument("--containerfile", type=Path, default=root / "Containerfile")
     parser.add_argument(
-        "--format", choices=("build-args", "table", "check"), default="build-args"
+        "--format", choices=("build-args", "table", "check", "sources"), default="build-args"
     )
     arguments = parser.parse_args()
 
@@ -158,7 +158,11 @@ def main() -> int:
             print(f"error: {problem}", file=sys.stderr)
         return 1
 
-    if arguments.format == "build-args":
+    if arguments.format == "sources":
+        for entry in manifest["tools"]:
+            if "archive_url" in entry:
+                print(f"{entry['archive_file']}\t{entry['archive_url']}\t{entry['version']}")
+    elif arguments.format == "build-args":
         print(" ".join(build_args(manifest)))
     elif arguments.format == "table":
         entries = manifest["tools"]
