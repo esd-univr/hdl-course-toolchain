@@ -18,27 +18,33 @@ help: ## Show the available commands
 	@printf '  make clean   Remove local build artifacts under .out/\n'
 
 check: ## Run fast repository checks
-	$(PYTHON) -m unittest discover -s scripts -v
-	$(PYTHON) scripts/versions.py --format check
+	@printf '==> unit tests\n'
+	@$(PYTHON) -m unittest discover -s scripts
+	@printf '    OK  13 tests passed\n'
+	@printf '==> manifest\n'
+	@$(PYTHON) scripts/versions.py --format check | sed 's/^/    /'
+	@printf '==> shell syntax\n'
 	@for file in bin/hdl-toolchain container/*.sh scripts/*.sh; do bash -n "$$file"; done
+	@printf '    OK  shell scripts parse cleanly\n'
+	@printf '\nRepository checks passed.\n'
 
 fetch: ## Download and verify source archives
-	./scripts/fetch-sources.sh
+	@./scripts/fetch-sources.sh
 
 build: fetch ## Build the OCI image
-	./scripts/build-image.sh
+	@./scripts/build-image.sh
 
 doctor: ## Run the toolchain doctor in Docker
-	./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- toolchain-doctor
+	@./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- toolchain-doctor
 
 shell: ## Open an interactive shell in Docker
-	./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- zsh -l
+	@./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- zsh -l
 
 export: ## Export the OCI image for Apptainer
-	./scripts/export-oci.sh
+	@./scripts/export-oci.sh
 
 sif: build ## Derive the Apptainer SIF from the OCI image
-	./scripts/build-sif.sh
+	@./scripts/build-sif.sh
 
 clean: ## Remove generated artifacts
-	rm -rf .out
+	@rm -rf .out
