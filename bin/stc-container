@@ -58,7 +58,7 @@ WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
 
 # Scratch that a lab or the doctor produces stays inside the workspace, so the
 # claim "only the workspace is modified" is true rather than approximately true.
-SCRATCH="${WORKSPACE}/.stc-container"
+SCRATCH="${WORKSPACE}/.toolchain"
 mkdir -p "${SCRATCH}/tmp" "${SCRATCH}/cache"
 
 case "${ENGINE}" in
@@ -81,8 +81,8 @@ docker)
         --mount "type=bind,source=${WORKSPACE},target=/work" \
         --workdir /work \
         --env HOME=/work \
-        --env TMPDIR=/work/.stc-container/tmp \
-        --env XDG_CACHE_HOME=/work/.stc-container/cache \
+        --env TMPDIR=/work/.toolchain/tmp \
+        --env XDG_CACHE_HOME=/work/.toolchain/cache \
         "${IMAGE}:${TAG}" "$@"
     ;;
 apptainer)
@@ -102,8 +102,8 @@ apptainer)
         "${network[@]}" \
         --home "${WORKSPACE}:/work" \
         --pwd /work \
-        --env TMPDIR=/work/.stc-container/tmp \
-        --env XDG_CACHE_HOME=/work/.stc-container/cache \
+        --env TMPDIR=/work/.toolchain/tmp \
+        --env XDG_CACHE_HOME=/work/.toolchain/cache \
         "${SIF}" "$@"
     ;;
 *)
