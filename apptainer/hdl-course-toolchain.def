@@ -1,27 +1,20 @@
 # Apptainer image for the HDL course toolchain.
 #
-# This deliberately installs nothing. It bootstraps from the docker-archive
-# exported from the OCI image built by Containerfile, so there is
-# exactly one toolchain installation to maintain and the two artifacts cannot
-# drift apart. Build it with:
-#
-#     make toolchain-sif
-#
-# which exports the archive first.
+# The SIF is derived from the OCI image built by Containerfile; it does not
+# maintain a second installation recipe. Build it with `make sif`.
 
 Bootstrap: docker-archive
 From: {{ARCHIVE}}
 
 %labels
     org.opencontainers.image.title       hdl-course-toolchain
-    org.opencontainers.image.description Candidate course toolchain (validation spike)
-    toolchain.derived-from                     Containerfile
-    toolchain.versions                         versions.yml
+    org.opencontainers.image.description Reproducible HDL/EDA course toolchain
+    toolchain.derived-from                Containerfile
+    toolchain.versions                    versions.yml
 
 %environment
-    # Apptainer ignores the OCI ENTRYPOINT, so the entrypoint's environment
-    # setup never runs here. Source the one canonical definition instead of
-    # restating PATH, which is how the two used to drift apart.
+    # Apptainer ignores the OCI ENTRYPOINT, so source the canonical runtime
+    # environment explicitly instead of restating PATH here.
     . /etc/profile.d/hdl-course-toolchain.sh
 
 %runscript

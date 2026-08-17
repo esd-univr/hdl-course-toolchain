@@ -1,5 +1,4 @@
-# The build context is toolchain/. .out holds build logs, image archives and
-# SIFs, none of which belong in the context -- but the pre-fetched, digest-
-# verified source archives do.
+# Build products do not belong in the Docker context. The pre-fetched,
+# digest-verified source archives are the one intentional exception.
 .out/*
 !.out/sources

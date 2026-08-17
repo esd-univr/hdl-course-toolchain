@@ -1,89 +1,99 @@
-# Version manifest for the containerized course toolchain.
+# Version manifest for the HDL course toolchain.
 #
-# This is the single source of truth. No version string may be hard-coded in
-# the Containerfile, in a build script, or in the documentation: every pin is
-# written here once and injected as a build argument by scripts/versions.py,
-# which also refuses to let this file and the Containerfile drift apart.
+# This is the single source of truth for build-time pins. No version string may
+# be hard-coded in the Containerfile or build scripts: each ARG declared by the
+# Containerfile must have exactly one entry here, and scripts/versions.py checks
+# that the two stay aligned.
 #
-# Grammar (deliberately narrow, so that reading it needs nothing beyond the
-# Python standard library): top-level scalars, then a single `tools:` list of
-# flat mappings. Values are scalars or `>` folded blocks.
+# Grammar: top-level scalars followed by one `tools:` list of flat mappings.
+# Values are scalars or folded (`>`) blocks so the manifest can be read using
+# only the Python standard library.
 #
 # Fields:
-#   name     human-readable tool name.
-#   arg      Containerfile ARG that receives this pin. Every ARG the
-#            Containerfile declares must appear here, and vice versa.
-#   version  tag, commit, package version, or release asset identifier.
-#   source   where it comes from.
-#   arch     architecture support as actually discovered by this spike.
-#   notes    reproducibility caveats and technical debt.
+#   name          human-readable tool name
+#   arg           Containerfile ARG receiving this pin
+#   version       tag, commit, package version, or archive SHA-256
+#   source        upstream source or package channel
+#   arch          known architecture support / qualification state
+#   archive_url   downloadable source or binary artifact
+#   archive_file  local filename used by scripts/fetch-sources.sh
+#   notes         reproducibility caveats and rationale
 
 manifest_version: 1
-spike: kitchen-sink-toolchain-container
-recorded: 2026-08-16
+recorded: 2026-08-17
 
 tools:
+  # --- base environment -------------------------------------------------------
+
   - name: base-image
     arg: BASE_IMAGE
     version: "ubuntu:22.04@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
     source: docker.io/library/ubuntu
     arch: "multi-arch index: linux/amd64 and linux/arm64 manifests both present"
     notes: >
-      Ubuntu 22.04 rather than 24.04 is forced by the OpenROAD binary channel,
-      whose .deb requires libpython3.10 and the pre-t64 libqt5* package names.
-      Ubuntu 24.04 ships Python 3.12 and renamed every Qt5 package to *t64, so
-      that .deb cannot be installed there. Pinned by index digest so the same
-      line resolves for both architectures.
+      Ubuntu 22.04 is retained because the available OpenROAD binary package
+      depends on Python 3.10 and the pre-t64 Qt5 package names used by jammy.
 
   # --- simulation and synthesis ---------------------------------------------
 
   - name: icarus-verilog
     arg: IVERILOG_REF
     version: "v12_0"
-    source: https://github.com/steveicarus/iverilog (archive refs/tags/v12_0.tar.gz)
-    arch: "unknown for linux/arm64: upstream CI has no aarch64 job"
+    source: https://github.com/steveicarus/iverilog
+    arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
-      Source build pinned to the tag. Ubuntu 22.04 packages 11.0, but the
-      native Lab 00 path on the development machine is validated against 12.0,
-      so the container matches that rather than introducing a second variable.
+      Built from source because Ubuntu 22.04 packages Icarus Verilog 11.0.
+
+  - name: icarus-verilog-archive
+    arg: IVERILOG_SHA256
+    version: "a68cb1ef7c017ef090ebedb2bc3e39ef90ecc70a3400afb4aa94303bc3beaa7d"
+    source: SHA-256 of the Icarus Verilog source archive
+    archive_url: https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz
+    archive_file: iverilog.tar.gz
 
   - name: verilator
     arg: VERILATOR_REF
     version: "v5.036"
-    source: https://github.com/verilator/verilator (archive refs/tags/v5.036.tar.gz)
-    arch: "linux/amd64 verified; linux/arm64 tested by upstream CI but not verified here"
+    source: https://github.com/verilator/verilator
+    arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
     notes: >
-      Ubuntu 22.04 packages 4.038, which is too old for cocotb 2.x. This is a
-      conservative pin chosen to match the base image's GCC 11 rather than the
-      newest tag; revisit when the course actually commits to Verilator.
+      Built from source because Ubuntu 22.04 packages Verilator 4.038, which is
+      too old for the pinned cocotb 2.x environment.
+
+  - name: verilator-archive
+    arg: VERILATOR_SHA256
+    version: "4199964882d56cf6a19ce80c6a297ebe3b0c35ea81106cd4f722342594337c47"
+    source: SHA-256 of the Verilator source archive
+    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.036.tar.gz
+    archive_file: verilator.tar.gz
 
   - name: yosys
     arg: YOSYS_REF
     version: "v0.66"
-    source: https://github.com/YosysHQ/yosys (release asset yosys-src.tar.gz)
-    arch: "linux/amd64 verified; linux/arm64 tested by upstream CI but not verified here"
+    source: https://github.com/YosysHQ/yosys
+    arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
     notes: >
-      NOT the newest release, and the reason matters. Yosys switched to CMake
-      at v0.68, which requires CMake >= 3.28, Bison >= 3.8, Python >= 3.11 and
-      a C++20 compiler; Ubuntu 22.04 provides CMake 3.22 and Python 3.10, and
-      upstream's own README tells 22.04 users to install a newer CMake from
-      snap. v0.66 is the last Makefile-based release and builds on this
-      baseline unchanged. Since Ubuntu 22.04 is itself forced by the OpenROAD
-      .deb, OpenROAD's packaging transitively caps the Yosys version this
-      image can carry -- see docs/toolchain-container.md. Ubuntu 22.04
-      packages Yosys 0.9, so this is still a large step forward. The release
-      tarball vendors abc, so the build needs no second unpinned fetch.
+      v0.66 is the last Makefile-based release compatible with the Ubuntu 22.04
+      baseline without introducing a newer CMake/Python toolchain. Its release
+      archive vendors ABC.
 
-  # --- runtime and analog ----------------------------------------------------
+  - name: yosys-archive
+    arg: YOSYS_SHA256
+    version: "ba567ea7fbb1287e996aef8f20fe902f6fd408593aa50cfaea8ae0c9015ab872"
+    source: SHA-256 of the Yosys release archive
+    archive_url: https://github.com/YosysHQ/yosys/releases/download/v0.66/yosys-src.tar.gz
+    archive_file: yosys.tar.gz
+    notes: >
+      The release archive is flat; the Containerfile intentionally does not
+      strip a leading directory when unpacking it.
+
+  # --- runtime and visualization --------------------------------------------
 
   - name: ngspice
     arg: NGSPICE_APT_VERSION
     version: "36+ds-1ubuntu0.1"
     source: ubuntu-22.04 archive
     arch: "linux/amd64, linux/arm64"
-    notes: >
-      Pinned to the exact archive version. If Ubuntu publishes a security
-      update the build fails rather than silently changing; update this line.
 
   - name: graphviz
     arg: GRAPHVIZ_APT_VERSION
@@ -96,36 +106,27 @@ tools:
     version: "3.3.104-2build1"
     source: ubuntu-22.04 archive
     arch: "linux/amd64, linux/arm64"
-
-  # Informational entries carry no `arg` and inject nothing; they record what
-  # the environment resolves to, so the manifest stays a complete description.
+    notes: >
+      Included as a convenience. GUI availability is host-dependent and is not
+      a hard requirement of the container qualification.
 
   - name: python
     version: "3.10.12 (ubuntu-22.04 archive)"
     source: ubuntu-22.04 archive
     arch: "linux/amd64, linux/arm64"
     notes: >
-      TECHNICAL DEBT. The interpreter and the other generic base packages
-      (bash, coreutils, make, git, curl, jq) are taken from the live Ubuntu
-      archive and are therefore not byte-reproducible over time: a security
-      update changes them without changing this file. The build records the
-      full dpkg manifest at /opt/toolchain/report/apt-packages.txt inside the
-      image so any given image can still be described exactly. The real fix is
-      to pin the apt sources to a snapshot.ubuntu.com timestamp; that was left
-      out of this spike deliberately to keep one variable at a time. The
-      course-relevant EDA packages above ARE pinned exactly.
+      Generic base packages are taken from the live Ubuntu archive and are not
+      byte-reproducible over time. Each built image records the resolved dpkg
+      manifest at /opt/toolchain/report/apt-packages.txt. Pinning apt to a
+      snapshot remains technical debt.
 
   - name: python-packages
     version: "see requirements.txt"
     source: PyPI
     arch: "pure Python; no architecture restriction"
     notes: >
-      cocotb 2.0.1 and pytest 8.4.2 are the direct pins in requirements.in;
-      requirements.txt is the generated full lock and is what the image
-      installs, so the build runs no dependency resolver and needs no index at
-      run time.
-
-
+      requirements.txt is the fully resolved lock installed by the image;
+      requirements.in records the direct dependencies.
 
   # --- interactive shell -----------------------------------------------------
 
@@ -134,9 +135,6 @@ tools:
     version: "97e11051e2f8053b1d694788d1cb4b0dbb1e2365"
     source: https://github.com/ohmyzsh/ohmyzsh
     arch: "architecture independent"
-    notes: >
-      Frozen interactive shell framework. Installed from a digest-verified
-      source archive; no updater or runtime network access is used.
 
   - name: oh-my-zsh-archive
     arg: OH_MY_ZSH_SHA256
@@ -158,100 +156,85 @@ tools:
     archive_url: https://github.com/zsh-users/zsh-syntax-highlighting/archive/c4d95591843d49838b7ad30081e7aba3135a6703.tar.gz
     archive_file: zsh-syntax-highlighting.tar.gz
 
-  # --- HIF, built from the published v1.1.0 sources ---------------------------
+  # --- coordinated HIF baseline ---------------------------------------------
   #
-  # Albion's development checkouts are deliberately not used. The point of this
-  # image is to prove the environment is reproducible from released sources.
+  # These four commits form one coordinated, qualified baseline. They are
+  # intentionally pinned by commit rather than by a floating branch or release
+  # label. The corresponding GitHub source archives are pinned by SHA-256.
 
   - name: hif-core
     arg: HIF_CORE_REF
-    version: "776fd245e72c6b1457b28983dd10f8f23a4ae086"
-    source: https://github.com/hif-project/hif-core (published tag v1.1.0)
-    arch: "linux/amd64 verified; linux/arm64 unknown, upstream CI is ubuntu-latest only"
+    version: "0fc2751d1b4a2fc30fbedb14639e3ede7a6b7433"
+    source: https://github.com/hif-project/hif-core
+    arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
-      Needs Poco (Foundation, Util, XML). Its CMakeLists hard-codes
-      set(CMAKE_INSTALL_PREFIX /usr/local) unconditionally, which overrides
-      -DCMAKE_INSTALL_PREFIX; `cmake --install --prefix` overrides it back at
-      install time, so no upstream patching is needed.
+      Needs Poco (Foundation, Util, XML). Upstream hard-codes /usr/local as its
+      CMake install prefix; the build overrides that at install time.
 
   - name: hif-core-archive
     arg: HIF_CORE_SHA256
-    version: "e897f5af06f51f29552839a2606850e8f4b627ae30655138a341419a9033beb9"
+    version: "8f534ec5ce8ff76b84616a1862081e0da3380a0d2899973e4a8d7225ccc7735e"
     source: SHA-256 of the hif-core source archive
-    archive_url: https://github.com/hif-project/hif-core/archive/776fd245e72c6b1457b28983dd10f8f23a4ae086.tar.gz
+    archive_url: https://github.com/hif-project/hif-core/archive/0fc2751d1b4a2fc30fbedb14639e3ede7a6b7433.tar.gz
     archive_file: hif-core.tar.gz
 
   - name: hif-frontend
     arg: HIF_FRONTEND_REF
-    version: "6b23a13e730aee9cde33613c3fa0e392ae3d4b2c"
-    source: https://github.com/hif-project/hif-frontend (published tag v1.1.0)
-    arch: "linux/amd64 verified; linux/arm64 unknown"
+    version: "43890f2b9f791252d0d72a41195d48f58d8c211b"
+    source: https://github.com/hif-project/hif-frontend
+    arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Provides verilog2hif and vhdl2hif. Needs Flex and Bison.
 
   - name: hif-frontend-archive
     arg: HIF_FRONTEND_SHA256
-    version: "c09cf87bfffcbd3075dd2ed86f5fb64ec62d86d53da757daa62b05698328efe9"
+    version: "45ccc4b9f15f5f4ffd602fb849e1ce71a6a8f14a072b2d1e45892d7143ff3e23"
     source: SHA-256 of the hif-frontend source archive
-    archive_url: https://github.com/hif-project/hif-frontend/archive/6b23a13e730aee9cde33613c3fa0e392ae3d4b2c.tar.gz
+    archive_url: https://github.com/hif-project/hif-frontend/archive/43890f2b9f791252d0d72a41195d48f58d8c211b.tar.gz
     archive_file: hif-frontend.tar.gz
 
   - name: hif-backend
     arg: HIF_BACKEND_REF
-    version: "944720fd04d3e3f7fdf04e734bfdaf1a871dd825"
-    source: https://github.com/hif-project/hif-backend (published tag v1.1.0)
-    arch: "linux/amd64 verified; linux/arm64 unknown"
+    version: "2c09a44f3c5e11d8035cbb6460e5643599f49ca1"
+    source: https://github.com/hif-project/hif-backend
+    arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
-      TECHNICAL DEBT -- the tag is ambiguous. The v1.1.0 tag published on
-      GitHub peels to this commit ("Merge branch develop into main for v1.1.0
-      release"), but the development checkout on Albion has a v1.1.0 tag
-      peeling to ef84e391 ("Merge branch main into develop after v1.1.0
-      release"). The tag was moved after release. This image pins the
-      published commit, so anyone comparing against a local checkout will see
-      a different SHA. Upstream should reconcile the two.
+      Provides hif2verilog and hif2vhdl. The commit pin is the authoritative
+      identity of the tool used by this image.
 
   - name: hif-backend-archive
     arg: HIF_BACKEND_SHA256
-    version: "78c35988e9b9ac9aafa5538fa997532690ab626c4f2c42aed7554e75633549a1"
+    version: "6cbb37da3e24a61c14484f8a63a14299ed402c5d33766e5450f6c826d659c528"
     source: SHA-256 of the hif-backend source archive
-    archive_url: https://github.com/hif-project/hif-backend/archive/944720fd04d3e3f7fdf04e734bfdaf1a871dd825.tar.gz
+    archive_url: https://github.com/hif-project/hif-backend/archive/2c09a44f3c5e11d8035cbb6460e5643599f49ca1.tar.gz
     archive_file: hif-backend.tar.gz
 
   - name: hif-muffin
     arg: HIF_MUFFIN_REF
-    version: "bcd387f7768082cb820ea1eab1560e3276936021"
-    source: https://github.com/hif-project/hif-muffin (published tag v1.1.0)
-    arch: "linux/amd64 verified; linux/arm64 unknown"
+    version: "dc2e8c4e45f680099ba0a764a59865a0e9f8388d"
+    source: https://github.com/hif-project/hif-muffin
+    arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
-      Provides muffin. See hif-muffin-json below for its one unpinned
-      dependency.
-
-  - name: hif-muffin-archive-file
-    arg: HIF_MUFFIN_ARCHIVE
-    version: "hif-muffin.tar.gz"
-    source: selects which muffin archive the build consumes
-    notes: >
-      Overridden by `make toolchain-build-hif-develop` to build the develop
-      channel instead. See hif-muffin-develop below for why that option exists.
+      Provides muffin. Its Galfurian/json FetchContent dependency is still
+      declared upstream with GIT_TAG main, so the dependency is pinned and
+      injected separately below.
 
   - name: hif-muffin-archive
     arg: HIF_MUFFIN_SHA256
-    version: "316b02dd53c635daeda873be1accab453b88c16ddeb8193b9506879e8eae4912"
+    version: "47f49191d2f4f1746548a8faa57e7ea6fb0e68ccbd088b68b80acb4509663477"
     source: SHA-256 of the hif-muffin source archive
-    archive_url: https://github.com/hif-project/hif-muffin/archive/bcd387f7768082cb820ea1eab1560e3276936021.tar.gz
+    archive_url: https://github.com/hif-project/hif-muffin/archive/dc2e8c4e45f680099ba0a764a59865a0e9f8388d.tar.gz
     archive_file: hif-muffin.tar.gz
 
   - name: hif-muffin-json
     arg: HIF_JSON_REF
     version: "930f32d755b167b0f11a1fd9c284c75fb2724485"
     source: https://github.com/Galfurian/json
-    arch: "header-only C++; not architecture specific"
+    arch: "header-only C++; architecture independent"
     notes: >
-      TECHNICAL DEBT. hif-muffin v1.1.0 declares this FetchContent dependency
-      with GIT_TAG main, i.e. unpinned: two builds of the same muffin tag can
-      pull different code. This image pins the commit main pointed at on
-      2026-08-16 and injects it through FETCHCONTENT_SOURCE_DIR_JSON, so
-      upstream is not patched. Upstream should pin the tag.
+      Reproducibility workaround for hif-muffin's floating GIT_TAG main. The
+      pinned source is supplied through FETCHCONTENT_SOURCE_DIR_JSON without
+      patching upstream.
 
   - name: hif-muffin-json-archive
     arg: HIF_JSON_SHA256
@@ -261,80 +244,40 @@ tools:
     archive_file: hif-json.tar.gz
 
   - name: hif-reported-version
-    version: "1.0.0 (as reported by the binaries at tag v1.1.0)"
+    version: "1.0.0 (reported by the pinned binaries)"
     source: observed
     notes: >
-      Informational, and a real caveat. verilog2hif, hif2verilog and muffin
-      built from the v1.1.0 sources all report "version 1.0.0", and generated
-      files carry the header "Generate with HIF version 1.0.0". The internal
-      version string was not bumped for the 1.1.0 release, so --version cannot
-      be used to tell which HIF release an installation is. The commit pins
-      above are the only reliable identity; the image also records them at
-      /opt/hif/BUILD_PINS.txt.
+      The HIF binaries do not expose enough version information to identify
+      this baseline reliably. /opt/hif/BUILD_PINS.txt records the authoritative
+      commit tuple embedded in each image.
 
-
-
-  # --- the HIF develop channel, for one specific known defect ------------------
-
-  - name: hif-muffin-develop
-    version: "4c472743b237d54d2130ce98b72b58b1b658ff98"
-    source: https://github.com/hif-project/hif-muffin (develop, 2026-08-16)
-    arch: "linux/amd64 verified"
-    notes: >
-      NOT the default, and not a version the course should adopt casually.
-      It exists because the coordinated v1.1.0 baseline cannot run the existing
-      Lab 00. Muffin v1.1.0 emits instrumented combinational logic as
-      `always @( a, b )`, omitting muffinMutPort from the sensitivity list, so
-      changing the fault selector alone never re-evaluates the process and Lab
-      00's LIVE check fails. Upstream fixed this after the release in
-      hif-muffin 19b7d93, "fix: make instrumented combinational logic sensitive
-      to muffinMutPort" (issue #16, PR #17), and even added a commit reading
-      "docs: build the and2 example against develop, not v1.1.0". Building with
-      this pin is what proves the container infrastructure is sound and the
-      blocker is purely the HIF version.
-
-  - name: hif-muffin-develop-archive
-    version: "cf4809ecdab7787b5a74dbe4808ba37885865a858938f54f93e1478b35999c0b"
-    source: SHA-256 of the hif-muffin develop source archive
-    archive_url: https://github.com/hif-project/hif-muffin/archive/4c472743b237d54d2130ce98b72b58b1b658ff98.tar.gz
-    archive_file: hif-muffin-develop.tar.gz
-
-  # --- ATPG / DFT candidates --------------------------------------------------
-  #
-  # These are carried by the kitchen-sink image so the spike can find out
-  # whether they package cleanly. The course does not depend on any of them,
-  # and the toolchain doctor reports them as candidates rather than failing.
+  # --- optional ATPG / DFT / implementation tools ---------------------------
 
   - name: rust
     arg: RUST_VERSION
     version: "1.90.0"
     source: https://sh.rustup.rs (static.rust-lang.org)
-    arch: "build-time only; toolchains published for both amd64 and arm64"
+    arch: "build-time only; toolchains published for linux/amd64 and linux/arm64"
     notes: >
-      Build-time only, needed to compile Quaigh. It does not reach the runtime
-      image.
+      Build-time dependency for Quaigh; it does not reach the runtime image.
 
   - name: quaigh
     arg: QUAIGH_VERSION
     version: "0.0.6"
     source: crates.io (upstream https://github.com/Coloquinte/quaigh)
-    arch: "linux/amd64 verified; linux/arm64 likely, no x86-only intrinsics found in its C deps"
+    arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
-      ATPG and logic-optimisation candidate. Installed with --locked so the
-      crate's own Cargo.lock decides the dependency graph rather than a fresh
-      resolution.
+      Installed with --locked so the crate's Cargo.lock fixes its dependency
+      graph.
 
   - name: openroad
     arg: OPENROAD_DEB_RELEASE
     version: "2024-12-14"
     source: https://github.com/Precision-Innovations/OpenROAD/releases
-    arch: "linux/amd64 ONLY -- no arm64 asset has ever been published"
+    arch: "linux/amd64 only"
     notes: >
-      The newest release carrying binary assets; the later 26Q1 tag publishes
-      none. This .deb is why the base image is Ubuntu 22.04: it requires
-      libpython3.10 and the pre-t64 libqt5* names, so it cannot be installed on
-      24.04. That choice in turn caps Yosys at 0.66. Verified to install on
-      jammy with no unmet dependencies and no missing shared libraries.
+      This release provides the Ubuntu 22.04 binary package consumed by the
+      image. No arm64 release asset is available in this channel.
 
   - name: openroad-deb
     arg: OPENROAD_DEB_SHA256
@@ -344,24 +287,19 @@ tools:
     archive_file: openroad.deb
     arch: "linux/amd64 only"
 
-
   - name: swift
     arg: SWIFT_VERSION
     version: "5.9.2"
-    source: https://download.swift.org (ubuntu2204 tarball)
-    arch: "amd64 and aarch64 tarballs both published for ubuntu22.04"
+    source: https://download.swift.org
+    arch: "build-time toolchain; amd64 and aarch64 archives are published"
     notes: >
-      Build-time only, needed to compile Fault; it does not reach the runtime
-      image, though 108 MB of Swift runtime libraries do. Fault's Package.swift
-      declares swift-tools-version:5.6, but it uses the `exact:` dependency
-      label, which is a Swift 5.7+ manifest feature -- and Swift publishes no
-      Ubuntu 22.04 build for 5.6.3 at all. 5.9.2 is the pin that was actually
-      verified to build it.
+      Build-time dependency for Fault. The current image consumes the amd64
+      Ubuntu 22.04 archive pinned below.
 
   - name: swift-archive
     arg: SWIFT_SHA256
     version: "6407e39eed7eaefcf7837d192d71765fb0f7cf8bf282c35b021171e8b15617c1"
-    source: SHA-256 of the Swift 5.9.2 ubuntu22.04 toolchain
+    source: SHA-256 of the Swift 5.9.2 Ubuntu 22.04 toolchain
     archive_url: https://download.swift.org/swift-5.9.2-release/ubuntu2204/swift-5.9.2-RELEASE/swift-5.9.2-RELEASE-ubuntu22.04.tar.gz
     archive_file: swift.tar.gz
     arch: "linux/amd64"
@@ -370,16 +308,12 @@ tools:
     arg: FAULT_REF
     version: "0.9.4"
     source: https://github.com/AUCOHL/Fault
-    arch: "linux/amd64 verified; no binary published for any architecture"
+    arch: "linux/amd64 verified; built from source"
     notes: >
-      TECHNICAL DEBT, and the least reproducible thing in this image. Fault's
-      Package.swift pins only PythonKit exactly; swift-collections, Defile,
-      BigInt, Yams and swift-argument-parser are all declared as open ranges,
-      so two builds of the same Fault tag can resolve different dependency
-      versions. Upstream's supported install path is Nix, which is out of
-      scope here. It also needs PYTHON_LIBRARY pointed at libpython, plus
-      pyverilog and nl2bench in the interpreter it drives through PythonKit,
-      and it shells out to Yosys and Icarus Verilog at run time.
+      Fault's Package.swift leaves several dependencies as open ranges, so this
+      component is not fully reproducible even though the Fault source itself
+      is pinned. It also depends on PythonKit, pyverilog, nl2bench, Yosys and
+      Icarus Verilog at run time.
 
   - name: fault-archive
     arg: FAULT_SHA256
@@ -387,42 +321,4 @@ tools:
     source: SHA-256 of the Fault 0.9.4 source archive
     archive_url: https://github.com/AUCOHL/Fault/archive/refs/tags/0.9.4.tar.gz
     archive_file: fault.tar.gz
-    arch: "not architecture specific: source"
-
-  # --- source archive integrity pins ---------------------------------------
-
-  - name: icarus-verilog-archive
-    arg: IVERILOG_SHA256
-    version: "a68cb1ef7c017ef090ebedb2bc3e39ef90ecc70a3400afb4aa94303bc3beaa7d"
-    source: SHA-256 of the icarus-verilog source archive
-    arch: "not architecture specific: source"
-    archive_url: https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz
-    archive_file: iverilog.tar.gz
-    notes: >
-      Integrity pin for the iverilog-12_0 source archive. Archives are pinned by digest rather than
-      by tag alone because a tag can be moved and a digest cannot; the build
-      fails loudly if upstream regenerates the archive.
-
-  - name: verilator-archive
-    arg: VERILATOR_SHA256
-    version: "4199964882d56cf6a19ce80c6a297ebe3b0c35ea81106cd4f722342594337c47"
-    source: SHA-256 of the verilator source archive
-    arch: "not architecture specific: source"
-    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.036.tar.gz
-    archive_file: verilator.tar.gz
-    notes: >
-      Integrity pin for the verilator-5.036 source archive. Archives are pinned by digest rather than
-      by tag alone because a tag can be moved and a digest cannot; the build
-      fails loudly if upstream regenerates the archive.
-
-  - name: yosys-archive
-    arg: YOSYS_SHA256
-    version: "ba567ea7fbb1287e996aef8f20fe902f6fd408593aa50cfaea8ae0c9015ab872"
-    source: SHA-256 of the yosys source archive
-    arch: "not architecture specific: source"
-    archive_url: https://github.com/YosysHQ/yosys/releases/download/v0.66/yosys-src.tar.gz
-    archive_file: yosys.tar.gz
-    notes: >
-      Integrity pin for the yosys v0.66 release asset yosys-src.tar.gz (a FLAT archive: do not strip components). Archives are pinned by digest rather than
-      by tag alone because a tag can be moved and a digest cannot; the build
-      fails loudly if upstream regenerates the archive.
+    arch: "source; architecture independent"
