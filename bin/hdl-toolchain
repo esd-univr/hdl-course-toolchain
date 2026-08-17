@@ -44,7 +44,20 @@ done
 WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
 
 SCRATCH="${WORKSPACE}/.toolchain"
-mkdir -p "${SCRATCH}/tmp" "${SCRATCH}/cache"
+mkdir -p \
+    "${SCRATCH}/tmp" \
+    "${SCRATCH}/cache" \
+    "${SCRATCH}/config" \
+    "${SCRATCH}/data" \
+    "${SCRATCH}/state"
+
+runtime_env=(
+    --env TMPDIR=/work/.toolchain/tmp
+    --env XDG_CACHE_HOME=/work/.toolchain/cache
+    --env XDG_CONFIG_HOME=/work/.toolchain/config
+    --env XDG_DATA_HOME=/work/.toolchain/data
+    --env XDG_STATE_HOME=/work/.toolchain/state
+)
 
 case "${ENGINE}" in
 docker)
@@ -62,8 +75,7 @@ docker)
         --mount "type=bind,source=${WORKSPACE},target=/work" \
         --workdir /work \
         --env HOME=/work \
-        --env TMPDIR=/work/.toolchain/tmp \
-        --env XDG_CACHE_HOME=/work/.toolchain/cache \
+        "${runtime_env[@]}" \
         "${IMAGE}:${TAG}" "$@"
     ;;
 apptainer)
@@ -78,8 +90,7 @@ apptainer)
         "${network[@]}" \
         --home "${WORKSPACE}:/work" \
         --pwd /work \
-        --env TMPDIR=/work/.toolchain/tmp \
-        --env XDG_CACHE_HOME=/work/.toolchain/cache \
+        "${runtime_env[@]}" \
         "${SIF}" "$@"
     ;;
 *)
