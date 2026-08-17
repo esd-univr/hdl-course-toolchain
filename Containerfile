@@ -286,7 +286,7 @@ ARG GTKWAVE_APT_VERSION
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        build-essential libnss-wrapper zsh \
+        build-essential libnss-wrapper zsh z3 \
         libreadline8 zlib1g libffi8 tcl8.6 libgomp1 perl python3-dev \
         libpython3.10 libcurl4 libedit2 libsqlite3-0 libxml2 libz3-4 \
         "ngspice=${NGSPICE_APT_VERSION}" \

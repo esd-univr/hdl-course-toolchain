@@ -257,6 +257,23 @@ def smoke_cocotb(workdir: Path):
     return True, "ran a cocotb testbench against Icarus through the VPI"
 
 
+def smoke_z3(workdir: Path):
+    """Prove that the SMT solver can solve a trivial constraint."""
+    problem = workdir / "z3_smoke.smt2"
+    problem.write_text(
+        "(set-logic QF_LIA)\n"
+        "(declare-const x Int)\n"
+        "(assert (= x 42))\n"
+        "(check-sat)\n"
+        "(get-value (x))\n",
+        encoding="utf-8",
+    )
+    code, out = run(["z3", str(problem)], cwd=workdir)
+    if code != 0 or "sat" not in out or "42" not in out:
+        return False, f"z3 did not solve the smoke constraint (rc={code}): {head(out)}"
+    return True, "solved a trivial integer constraint"
+
+
 CHECKS = (
     # Required: what the course would actually stand on.
     Check("python3", sys.executable, [sys.executable, "-V"], True),
@@ -266,6 +283,7 @@ CHECKS = (
     Check("iverilog", "iverilog", ["iverilog", "-V"], True, smoke_iverilog),
     Check("vvp", "vvp", ["vvp", "-V"], True),
     Check("verilator", "verilator", ["verilator", "--version"], True, smoke_verilator),
+    Check("z3", "z3", ["z3", "--version"], True, smoke_z3),
     Check("cocotb", sys.executable, [sys.executable, "-c",
                                      "import cocotb; print(cocotb.__version__)"],
           True, smoke_cocotb),
