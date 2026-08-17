@@ -1,23 +1,36 @@
 # HDL Course Toolchain
 
-Reproducible HDL/EDA toolchain for teaching digital systems, testing, and verification courses at the University of
-Verona.
+Reproducible HDL/EDA environment for digital systems, testing, and verification
+courses at the University of Verona.
 
-The repository provides a shared execution environment for course repositories. It contains the toolchain only:
-exercises, labs, and course-specific validation remain in their respective repositories.
+This repository contains shared infrastructure only. Exercises, assignment
+logic, expected results, and course-specific qualification remain in the course
+repositories.
 
-## Goals
+## Quick start
 
-- provide the same HDL toolchain across different courses;
-- support both Docker/OCI and Apptainer workflows;
-- pin tool versions and source archives explicitly;
-- avoid hidden dependencies on the host system;
-- provide functional smoke tests through a common doctor;
-- keep course material separate from infrastructure.
+The root `Makefile` is the supported human-facing interface:
+
+```bash
+make help
+make check
+make build
+make doctor
+```
+
+Open an interactive shell in the built Docker image:
+
+```bash
+make shell
+```
+
+The launcher mounts the selected workspace at `/work` and disables network
+access by default.
 
 ## Toolchain
 
-The environment includes tools for simulation, synthesis, verification, testing, and implementation, including:
+The environment includes tools for simulation, synthesis, verification,
+testing, and implementation, including:
 
 - Icarus Verilog
 - Verilator
@@ -25,94 +38,79 @@ The environment includes tools for simulation, synthesis, verification, testing,
 - cocotb / pytest
 - Z3
 - HIF and Muffin
-- Fault
 - Quaigh
+- Fault
 - ngspice
 - OpenROAD
 - GTKWave
 - Graphviz
 
-Exact versions, source references, and archive digests are defined in [`versions.yml`](versions.yml).
-
-## Quick start
-
-Fetch the pinned source archives:
-
-```bash
-./scripts/fetch-sources.sh
-````
-
-Build the OCI image:
-
-```bash
-./scripts/build-image.sh
-```
-
-Run the toolchain doctor:
-
-```bash
-./bin/hdl-toolchain --workspace "$PWD" -- toolchain-doctor
-```
-
-Open an interactive shell:
-
-```bash
-./bin/hdl-toolchain --workspace "$PWD" -- zsh -l
-```
-
-The launcher mounts the selected workspace at `/work` and disables network access by default.
-
-## Docker and Apptainer
-
-The OCI image is the canonical toolchain definition.
-
-The Apptainer image is derived from the same OCI artifact rather than rebuilding the environment independently. This
-keeps Docker and Apptainer installations aligned.
-
-The launcher supports both engines:
-
-```bash
-./bin/hdl-toolchain --engine docker ...
-./bin/hdl-toolchain --engine apptainer ...
-```
+Exact versions, source commits, and archive digests are defined in
+[`versions.yml`](versions.yml).
 
 ## Reproducibility
 
-Tool versions are maintained centrally in [`versions.yml`](versions.yml).
+`versions.yml` is the source of truth for build-time pins. The build tooling
+checks that every `Containerfile` version argument has a corresponding manifest
+entry and that no manifest pin is unused. Downloaded source archives are
+SHA-256 verified before use.
 
-The build infrastructure checks that:
+Python dependencies are separately locked in
+[`requirements.txt`](requirements.txt).
 
-- every build-time version argument has a corresponding pin;
-- unused pins are rejected;
-- downloadable source archives are SHA-256 verified;
-- the manifest and `Containerfile` cannot silently drift apart.
+HIF is pinned as one coordinated commit tuple across `hif-core`,
+`hif-frontend`, `hif-backend`, and `hif-muffin`; the image records those exact
+commits at `/opt/hif/BUILD_PINS.txt`.
 
-Python dependencies are separately locked in [`requirements.txt`](requirements.txt).
+## Docker and Apptainer
+
+The OCI image built from `Containerfile` is the canonical installed
+environment. The Apptainer SIF is derived from that OCI image rather than from a
+second installation recipe.
+
+Build the SIF with:
+
+```bash
+make sif
+```
+
+Run through either engine with the same launcher:
+
+```bash
+./bin/hdl-toolchain --engine docker --workspace "$PWD" -- zsh -l
+./bin/hdl-toolchain --engine apptainer --workspace "$PWD" -- zsh -l
+```
+
+Environment overrides use the `HDL_TOOLCHAIN_*` prefix, including
+`HDL_TOOLCHAIN_IMAGE`, `HDL_TOOLCHAIN_TAG`, `HDL_TOOLCHAIN_PLATFORM`,
+`HDL_TOOLCHAIN_ENGINE`, and `HDL_TOOLCHAIN_SIF`.
+
+## Validation model
+
+`toolchain-doctor` checks the installed environment and runs small functional
+smoke tests where appropriate. Course repositories own the higher-level
+qualification that proves their exercises work with a particular toolchain
+revision.
+
+A successful doctor means the environment is healthy; it does not by itself
+qualify every consuming course.
 
 ## Repository layout
 
 ```text
 .
-├── Containerfile
-├── versions.yml
-├── requirements.txt
-├── apptainer/      # Apptainer image definition
-├── bin/            # user-facing launcher
-├── container/      # runtime environment and shell setup
-├── doctor/         # functional toolchain checks
-└── scripts/        # build, fetch, export, and validation helpers
+├── Containerfile             # canonical OCI build
+├── versions.yml              # tool and archive pins
+├── Makefile                  # human-facing commands
+├── requirements.in           # direct Python dependencies
+├── requirements.txt          # resolved Python lock
+├── apptainer/                # OCI-to-SIF definition
+├── bin/                      # user-facing launcher
+├── container/                # runtime shell and entrypoint
+├── doctor/                   # functional health checks
+├── docs/                     # architecture and maintenance notes
+└── scripts/                  # build, fetch, export, and validation helpers
 ```
 
-## Validation model
-
-`toolchain-doctor` checks the installed tools and runs small functional smoke tests where appropriate.
-
-Course repositories are responsible for their own higher-level qualification: a successful toolchain doctor means that
-the environment works, not that every course exercise has been validated against that particular toolchain revision.
-
-## Development status
-
-The toolchain is under active development while it is being qualified against the HDL courses that consume it.
-
-Changes to shared infrastructure should remain course-independent. Course-specific wrappers, exercises, expected
-outputs, and pedagogical checks belong in the corresponding course repository.
+See [`docs/architecture.md`](docs/architecture.md) for the repository boundary,
+build flow, and validation model.

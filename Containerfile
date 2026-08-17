@@ -2,23 +2,21 @@
 # -----------------------------------------------------------------------------
 # HDL course toolchain.
 #
-# This file is the canonical build description for the course environment. An
-# Apptainer SIF is derived from the image it produces rather than installing
-# anything a second time; see apptainer/hdl-course-toolchain.def.
+# This file is the canonical OCI build description. The Apptainer SIF is
+# derived from this image rather than installing the toolchain independently;
+# see apptainer/hdl-course-toolchain.def.
 #
-# Every version this file consumes is pinned in versions.yml and
-# passed in as a build argument. The ARGs deliberately have no defaults, so a
-# missing pin fails the build instead of silently resolving to "latest".
-# scripts/versions.py refuses to let the two files drift apart.
+# Every build-time version is pinned in versions.yml and passed as a build ARG.
+# ARGs deliberately have no defaults, and scripts/versions.py checks that the
+# manifest and this file cannot silently drift apart.
 #
-# Ubuntu 22.04 rather than 24.04: the only official OpenROAD binary channel
-# publishes an ubuntu-22.04 .deb that needs libpython3.10 and the pre-t64
-# libqt5* package names, neither of which exists on 24.04.
+# Ubuntu 22.04 is retained because the available OpenROAD binary package needs
+# libpython3.10 and the pre-t64 Qt5 package names provided by jammy.
 # -----------------------------------------------------------------------------
 ARG BASE_IMAGE
 
 # -----------------------------------------------------------------------------
-# Stage: base -- the packages every later stage and the runtime share.
+# Stage: base -- packages shared by builders and runtime.
 # -----------------------------------------------------------------------------
 FROM ${BASE_IMAGE} AS base
 
@@ -32,23 +30,19 @@ RUN apt-get update \
         python3 python3-venv python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
-# Where the build records what actually happened, so that a partially
-# successful kitchen sink reports itself honestly at run time instead of
-# looking green. Read by the toolchain doctor.
+# Runtime status and provenance consumed by the toolchain doctor.
 RUN mkdir -p /opt/toolchain/bin /opt/toolchain/status /opt/toolchain/report
 
 # -----------------------------------------------------------------------------
-# Stage: builder-eda -- source builds of the simulation and synthesis tools.
-#
-# Ubuntu 22.04 packages Icarus 11.0, Verilator 4.038 and Yosys 0.9, all too old
-# for this course. Each is therefore built from a pinned tag into a DESTDIR, so
-# the runtime can take the installed tree without inheriting the sources or the
-# build dependencies.
+# Stage: builder-eda -- simulation and synthesis tools built from source.
 # -----------------------------------------------------------------------------
 FROM base AS builder-eda
 ARG IVERILOG_REF
 ARG VERILATOR_REF
 ARG YOSYS_REF
+ARG IVERILOG_SHA256
+ARG VERILATOR_SHA256
+ARG YOSYS_SHA256
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -56,24 +50,14 @@ RUN apt-get update \
         libfl-dev libreadline-dev zlib1g-dev libffi-dev \
         tcl-dev pkg-config help2man perl python3-dev \
  && rm -rf /var/lib/apt/lists/*
-# libfl-dev, not flex, is what ships FlexLexer.h on Ubuntu; Verilator needs it.
-
-ARG IVERILOG_SHA256
-ARG VERILATOR_SHA256
-ARG YOSYS_SHA256
+# libfl-dev, not flex, ships FlexLexer.h on Ubuntu; Verilator needs it.
 
 COPY container/fetch.sh /usr/local/bin/fetch.sh
 RUN chmod 0755 /usr/local/bin/fetch.sh
 
-# Source archives rather than git clones, fetched on the host by
-# scripts/fetch-sources.sh and copied in. Cloning or downloading these from
-# inside the build stalled repeatedly on this host while the identical download
-# from the host took seconds. The archives carry their SHA-256 in versions.yml
-# and are verified BOTH by the host fetcher and again here, so a corrupted or
-# substituted archive fails the build rather than producing a mystery binary.
-#
-# Each stage copies only the archives it needs. Copying the whole directory
-# made adding a source for one tool invalidate every other tool's layer.
+# Source archives are fetched and SHA-256 verified on the host, then verified
+# again while unpacking in the build. Each stage copies only what it consumes so
+# unrelated source changes do not invalidate its cache.
 COPY .out/sources/iverilog.tar.gz .out/sources/verilator.tar.gz \
      .out/sources/yosys.tar.gz /src/archives/
 
@@ -86,8 +70,8 @@ RUN fetch.sh --local "${IVERILOG_SHA256}" /src/archives/iverilog.tar.gz \
  && make -j"$(nproc)" \
  && make DESTDIR=/dest install
 
-# Verilator. Its version string comes from configure.ac, not `git describe`, so
-# building from an archive still reports the correct version.
+# Verilator. Its version comes from configure.ac rather than git metadata, so a
+# source archive still reports the intended version.
 RUN fetch.sh --local "${VERILATOR_SHA256}" /src/archives/verilator.tar.gz \
         /src/verilator --strip-components=1 \
  && cd /src/verilator \
@@ -96,35 +80,28 @@ RUN fetch.sh --local "${VERILATOR_SHA256}" /src/archives/verilator.tar.gz \
  && make -j"$(nproc)" \
  && make DESTDIR=/dest install
 
-# Yosys, from the release asset that vendors abc, so the build needs no second
-# unpinned fetch. Note this archive is FLAT -- its members sit at the archive
-# root -- so it must not be stripped.
+# Yosys uses the release archive that vendors ABC. The archive is flat and must
+# not have a leading path component stripped.
 RUN fetch.sh --local "${YOSYS_SHA256}" /src/archives/yosys.tar.gz /src/yosys \
  && cd /src/yosys \
  && make -j"$(nproc)" PREFIX=/usr/local \
  && make install PREFIX=/usr/local DESTDIR=/dest
 
 # -----------------------------------------------------------------------------
-# Stage: builder-hif -- HIF v1.1.0 from the published sources.
+# Stage: builder-hif -- coordinated HIF baseline from pinned source archives.
 #
-# Albion's development checkouts are deliberately NOT used: the point of this
-# image is to prove the environment is reproducible from released sources, so
-# the four projects are rebuilt here from pinned, digest-verified archives.
+# Two upstream details are handled without patching the projects:
 #
-# Two upstream facts are handled here without patching anything:
-#
-#  1. Every CMakeLists.txt hard-codes set(CMAKE_INSTALL_PREFIX /usr/local)
-#     unconditionally, which overrides -DCMAKE_INSTALL_PREFIX. CMake's
-#     `--install --prefix` overrides it back at install time.
-#  2. hif-muffin FetchContents Galfurian/json at GIT_TAG main -- unpinned. The
-#     pinned source is pre-placed and injected via FETCHCONTENT_SOURCE_DIR_JSON.
+#  1. The HIF CMake projects hard-code /usr/local as CMAKE_INSTALL_PREFIX;
+#     `cmake --install --prefix` redirects installation to /opt/hif.
+#  2. hif-muffin declares Galfurian/json with GIT_TAG main. A pinned copy is
+#     supplied through FETCHCONTENT_SOURCE_DIR_JSON.
 # -----------------------------------------------------------------------------
 FROM base AS builder-hif
 ARG HIF_CORE_REF
 ARG HIF_FRONTEND_REF
 ARG HIF_BACKEND_REF
 ARG HIF_MUFFIN_REF
-ARG HIF_MUFFIN_ARCHIVE
 ARG HIF_JSON_REF
 ARG HIF_CORE_SHA256
 ARG HIF_FRONTEND_SHA256
@@ -139,14 +116,13 @@ RUN apt-get update \
 
 COPY container/fetch.sh /usr/local/bin/fetch.sh
 COPY .out/sources/hif-core.tar.gz .out/sources/hif-frontend.tar.gz \
-     .out/sources/hif-muffin-develop.tar.gz \
      .out/sources/hif-backend.tar.gz .out/sources/hif-muffin.tar.gz \
      .out/sources/hif-json.tar.gz /src/archives/
 RUN chmod 0755 /usr/local/bin/fetch.sh \
  && fetch.sh --local "${HIF_CORE_SHA256}"     /src/archives/hif-core.tar.gz     /src/hif-core     --strip-components=1 \
  && fetch.sh --local "${HIF_FRONTEND_SHA256}" /src/archives/hif-frontend.tar.gz /src/hif-frontend --strip-components=1 \
  && fetch.sh --local "${HIF_BACKEND_SHA256}"  /src/archives/hif-backend.tar.gz  /src/hif-backend  --strip-components=1 \
- && fetch.sh --local "${HIF_MUFFIN_SHA256}"   "/src/archives/${HIF_MUFFIN_ARCHIVE}"   /src/hif-muffin   --strip-components=1 \
+ && fetch.sh --local "${HIF_MUFFIN_SHA256}"   /src/archives/hif-muffin.tar.gz   /src/hif-muffin   --strip-components=1 \
  && fetch.sh --local "${HIF_JSON_SHA256}"     /src/archives/hif-json.tar.gz     /src/json         --strip-components=1
 
 # hif-core first: the other three link against it.
@@ -155,8 +131,8 @@ RUN cmake -S /src/hif-core -B /src/hif-core/build \
  && cmake --build /src/hif-core/build -j"$(nproc)" \
  && cmake --install /src/hif-core/build --prefix /opt/hif
 
-# The other three find hif-core through their cmake/FindHIF.cmake, which
-# searches ${HIF_DIR} first.
+# The remaining projects find hif-core through their cmake/FindHIF.cmake,
+# which searches HIF_DIR first.
 RUN set -eu; \
     for name in hif-frontend hif-backend hif-muffin; do \
         echo "=== building ${name} ==="; \
@@ -169,8 +145,8 @@ RUN set -eu; \
         cmake --install "/src/${name}/build" --prefix /opt/hif; \
     done
 
-# Record exactly what was built. The binaries all report "version 1.0.0" even
-# at tag v1.1.0, so these commit pins are the only reliable identity.
+# Record the authoritative source tuple inside the image. The binaries' own
+# version strings are not sufficient to identify this baseline.
 RUN { \
       echo "hif-core     ${HIF_CORE_REF}"; \
       echo "hif-frontend ${HIF_FRONTEND_REF}"; \
@@ -180,19 +156,12 @@ RUN { \
     } > /opt/hif/BUILD_PINS.txt
 
 # -----------------------------------------------------------------------------
-# Stage: builder-rust -- Quaigh, an ATPG and logic-optimisation candidate.
-#
-# The Rust toolchain is build-time only and does not reach the runtime image.
-# The retry settings are not decoration: this host's container egress is
-# intermittently flaky, and a single dropped connection would otherwise cost
-# the whole build.
+# Stage: builder-rust -- Quaigh, an optional ATPG/logic-optimisation tool.
 # -----------------------------------------------------------------------------
 FROM base AS builder-rust
 ARG RUST_VERSION
 ARG QUAIGH_VERSION
 
-# Quaigh's dependency graph reaches openssl-sys, libgit2-sys and libssh2-sys,
-# all of which need system headers and pkg-config to build.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential pkg-config libssl-dev zlib1g-dev cmake \
@@ -216,23 +185,16 @@ RUN set -eu; \
         --default-toolchain "${RUST_VERSION}"; \
     rm -f /tmp/rustup.sh
 
-# --locked so the crate's own Cargo.lock decides the dependency graph rather
-# than a fresh resolution, which would not be reproducible.
 RUN /opt/cargo/bin/cargo install quaigh --version "${QUAIGH_VERSION}" \
         --locked --root /dest/usr/local \
  && rm -f /dest/usr/local/.crates.toml /dest/usr/local/.crates2.json
 
 # -----------------------------------------------------------------------------
-# Stage: builder-fault -- Fault, an ATPG / fault-simulation candidate.
+# Stage: builder-fault -- optional Fault ATPG/fault-simulation tool.
 #
-# Fault is written in Swift and upstream's supported install path is Nix, which
-# is out of scope here, so it is built from source against an official Swift
-# toolchain. The toolchain is build-time only; only the binary and the Swift
-# runtime libraries reach the runtime image.
-#
-# The outcome is recorded rather than allowed to abort the build: this is a
-# candidate, and a kitchen sink that fails entirely because one experimental
-# tool broke would tell us less than one that reports which tool broke.
+# Fault is built from source against an official Swift toolchain. Its outcome
+# is recorded rather than aborting the image build, because it is an optional
+# capability and the doctor reports its status explicitly.
 # -----------------------------------------------------------------------------
 FROM base AS builder-fault
 ARG SWIFT_VERSION
@@ -240,8 +202,6 @@ ARG SWIFT_SHA256
 ARG FAULT_REF
 ARG FAULT_SHA256
 
-# Swift needs a C toolchain to link; without gcc it fails while compiling the
-# package manifest itself, with an error that looks nothing like the cause.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential binutils libc6-dev libcurl4-openssl-dev libedit2 \
@@ -274,10 +234,6 @@ RUN set -eu; \
 
 # -----------------------------------------------------------------------------
 # Stage: builder-shell -- frozen interactive shell assets.
-#
-# Oh My Zsh and zsh-syntax-highlighting are unpacked from source archives
-# fetched and SHA-256 verified by the same mechanism used for the other pinned
-# sources. No git metadata or build-time network access reaches the runtime.
 # -----------------------------------------------------------------------------
 FROM base AS builder-shell
 ARG OH_MY_ZSH_REF
@@ -302,13 +258,11 @@ RUN chmod 0755 /usr/local/bin/fetch.sh \
         "${OH_MY_ZSH_REF}" "${ZSH_SYNTAX_HIGHLIGHTING_REF}" \
         > /opt/oh-my-zsh/BUILD_PINS.txt
 
-
 # -----------------------------------------------------------------------------
 # Stage: runtime -- the image that is actually run.
 #
-# It keeps a C++ compiler on purpose. Verilator and cocotb compile the design
-# under test at run time, so build-essential here is a genuine runtime
-# dependency and not leftover build scaffolding.
+# A C++ compiler remains intentionally: Verilator and cocotb compile designs at
+# run time, so build-essential is a real runtime dependency.
 # -----------------------------------------------------------------------------
 FROM base AS runtime
 ARG NGSPICE_APT_VERSION
@@ -327,9 +281,8 @@ RUN apt-get update \
 
 COPY --from=builder-eda /dest/ /
 
-# HIF. Poco is a runtime dependency of libhif; the ld.so.conf.d entry is what
-# makes the shared library resolvable without any caller setting
-# LD_LIBRARY_PATH, which is one of the things this spike has to prove.
+# Poco is a runtime dependency of libhif. The ld.so.conf.d entry makes libhif
+# resolvable without requiring callers to set LD_LIBRARY_PATH.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         libpocofoundation80 libpocoutil80 libpocoxml80 \
@@ -337,8 +290,7 @@ RUN apt-get update \
 COPY --from=builder-hif /opt/hif/ /opt/hif/
 RUN echo /opt/hif/lib > /etc/ld.so.conf.d/hif.conf && ldconfig
 
-# The Python environment. requirements.txt is a generated full lock, so no
-# dependency resolution happens here and nothing is fetched at run time.
+# Python dependencies are installed from the resolved lock file.
 COPY requirements.txt /opt/toolchain/requirements.txt
 RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
@@ -347,13 +299,8 @@ RUN python3 -m venv /opt/venv \
 ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:/opt/toolchain/bin:/opt/hif/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 
-# Quaigh (candidate).
+# Optional/candidate tools.
 COPY --from=builder-rust /dest/ /
-
-# Fault (candidate). May be a recorded failure; the doctor reads the status.
-# PythonKit dlopens libpython at run time and cannot find it unaided, and Fault
-# drives pyverilog and nl2bench through that interpreter -- both are in the
-# toolchain venv, see requirements.in.
 COPY --from=builder-fault /dest/opt/ /opt/
 RUN if [ -x /opt/fault/bin/fault ]; then \
         echo /opt/fault/lib > /etc/ld.so.conf.d/fault.conf; \
@@ -362,10 +309,9 @@ RUN if [ -x /opt/fault/bin/fault ]; then \
     fi
 ENV PYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.10.so.1.0
 
-# OpenROAD (candidate), from the only official binary channel. amd64 only: no
-# arm64 asset has ever been published, so on another architecture this records
-# "unsupported-arch" and the doctor reports it rather than the tool silently
-# being absent.
+# OpenROAD is available only for amd64 in the selected binary channel. Other
+# architectures record the capability as unsupported rather than failing the
+# whole image build.
 ARG OPENROAD_DEB_RELEASE
 ARG OPENROAD_DEB_SHA256
 COPY .out/sources/openroad.deb /src/archives/openroad.deb
@@ -391,15 +337,13 @@ RUN set -eu; \
     fi; \
     echo "openroad: $(cat "${status}")"
 
-# Every candidate reports a status so a partially successful kitchen sink is
-# visible rather than green. The tools whose failure would have aborted the
-# build are recorded as ok here for uniformity.
+# Tools whose installation would already have aborted the build are recorded as
+# healthy here for the same status interface used by optional components.
 RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
                 verilog2hif hif2verilog cocotb pytest graphviz gtkwave; do \
         echo ok > "/opt/toolchain/status/${tool}.status"; \
     done
 
-# Frozen interactive shell environment.
 COPY --from=builder-shell /opt/oh-my-zsh/ /opt/oh-my-zsh/
 
 COPY container/profile.sh /etc/profile.d/hdl-course-toolchain.sh
@@ -407,9 +351,8 @@ RUN mkdir -p /opt/toolchain/zsh
 COPY container/zshrc /opt/toolchain/zsh/.zshrc
 COPY container/entrypoint.sh /opt/toolchain/bin/entrypoint.sh
 
-# The toolchain self-test. It runs inside the image, needs no network, and is
-# what turns "the tool is on PATH" into "the tool did a job and the answer was
-# right" for the components the course would stand on.
+# The doctor turns presence checks into small functional tests for the
+# components the environment depends on.
 COPY doctor/ /opt/toolchain/doctor/
 RUN printf '#!/bin/sh\nexec /opt/venv/bin/python3 /opt/toolchain/doctor/toolchain_doctor.py "$@"\n' \
       > /opt/toolchain/bin/toolchain-doctor \
@@ -417,9 +360,8 @@ RUN printf '#!/bin/sh\nexec /opt/venv/bin/python3 /opt/toolchain/doctor/toolchai
                 /etc/profile.d/hdl-course-toolchain.sh \
  && ldconfig
 
-# Record exactly which archive packages this image resolved to. The generic
-# base packages are not version-pinned (see versions.yml), so this manifest is
-# what makes a given image describable after the fact.
+# Record the exact archive package versions resolved into this image. Generic
+# base packages are not yet pinned to an Ubuntu snapshot; see versions.yml.
 RUN dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' \
       | sort > /opt/toolchain/report/apt-packages.txt
 

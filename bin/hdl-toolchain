@@ -1,32 +1,19 @@
 #!/usr/bin/env bash
 # Run a command inside the course toolchain image against a mounted workspace.
 #
-# This wrapper is the supported way to launch either engine. It exists to make
-# Docker and Apptainer behave the same, because by default they do not:
-#
-#   - Docker gives the container a writable root layer; a SIF root is
-#     read-only. `--read-only` makes Docker match, so a tool that writes into
-#     the image fails in testing rather than only in front of a student.
-#   - Apptainer ignores the OCI ENTRYPOINT, so environment setup has to be
-#     driven from here and from /etc/profile.d/hdl-course-toolchain.sh.
-#   - `--containall` does NOT disable networking. Only `--net --network none`
-#     does, and it works unprivileged with this Apptainer installation.
-#
-# The bind mount at /work is the only path intended to survive the run. Both
-# engines additionally provide a writable, private, throwaway /tmp; TMPDIR is
-# pointed inside the workspace so that even scratch files are visible and
-# cleanable rather than hidden in the container.
+# Docker and Apptainer are intentionally normalized here: both get an isolated
+# root environment, no network by default, and one writable workspace at /work.
 set -euo pipefail
 
 IMAGE="${HDL_TOOLCHAIN_IMAGE:-hdl-course-toolchain}"
-TAG="${HDL_TOOLCHAIN_TAG:-spike}"
+TAG="${HDL_TOOLCHAIN_TAG:-latest}"
 ENGINE="${HDL_TOOLCHAIN_ENGINE:-docker}"
 SIF="${HDL_TOOLCHAIN_SIF:-.out/hdl-course-toolchain.sif}"
 WORKSPACE=""
 ALLOW_NETWORK="no"
 
 usage() {
-    cat >&2 <<'EOF'
+    cat >&2 <<'EOF_USAGE'
 usage: hdl-toolchain [options] -- COMMAND [ARGS...]
 
   --workspace DIR   host directory to mount at /work (required)
@@ -35,7 +22,7 @@ usage: hdl-toolchain [options] -- COMMAND [ARGS...]
   --network         allow network access (denied by default, both engines)
 
 Environment: HDL_TOOLCHAIN_IMAGE, HDL_TOOLCHAIN_TAG, HDL_TOOLCHAIN_ENGINE, HDL_TOOLCHAIN_SIF.
-EOF
+EOF_USAGE
     exit 2
 }
 
@@ -56,8 +43,6 @@ done
 [ -d "${WORKSPACE}" ] || { echo "error: no such directory: ${WORKSPACE}" >&2; exit 2; }
 WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
 
-# Scratch that a lab or the doctor produces stays inside the workspace, so the
-# claim "only the workspace is modified" is true rather than approximately true.
 SCRATCH="${WORKSPACE}/.toolchain"
 mkdir -p "${SCRATCH}/tmp" "${SCRATCH}/cache"
 
@@ -65,10 +50,6 @@ case "${ENGINE}" in
 docker)
     network=(--network none)
     [ "${ALLOW_NETWORK}" = "no" ] || network=()
-    # Running as the invoking user keeps every generated file owned by the
-    # student rather than by root. --read-only makes the root filesystem match
-    # the SIF's; /tmp and /var/tmp are supplied as tmpfs because a read-only
-    # rootfs with no writable temp breaks ordinary tools.
     tty=()
     [ -t 0 ] && [ -t 1 ] && tty=(-t)
     exec docker run --rm -i "${tty[@]}" \
@@ -87,16 +68,11 @@ docker)
     ;;
 apptainer)
     if [ ! -f "${SIF}" ]; then
-        echo "error: no SIF at ${SIF}; run 'make toolchain-sif' first" >&2
+        echo "error: no SIF at ${SIF}; run 'make sif' first" >&2
         exit 2
     fi
-    # --containall keeps the host home, /tmp and environment out. It does not
-    # disable networking, so --net --network none is what actually denies it.
     network=(--net --network none)
     [ "${ALLOW_NETWORK}" = "no" ] || network=()
-    # Apptainer refuses --env HOME; --home is how it is set, and the src:dest
-    # form makes the workspace the home directory, which keeps HOME identical
-    # to the Docker branch instead of quietly diverging.
     exec apptainer exec \
         --containall \
         "${network[@]}" \

@@ -23,7 +23,6 @@ import versions  # noqa: E402  (path set up above)
 MANIFEST = textwrap.dedent(
     """
     manifest_version: 1
-    spike: test
 
     tools:
       - name: base-image
@@ -136,12 +135,7 @@ class TestValidation(ManifestTestCase):
 
 
 class TestDownloadableEntries(ManifestTestCase):
-    """A downloadable entry's version is the digest the fetcher compares against.
-
-    Attaching archive_url to an entry whose version is a git ref makes the
-    fetcher compare a commit id against a SHA-256 and fail with a confusing
-    message. This happened once; it should not happen quietly again.
-    """
+    """A downloadable entry's version is the digest the fetcher compares against."""
 
     MANIFEST_WITH_REF_AS_VERSION = textwrap.dedent(
         """
