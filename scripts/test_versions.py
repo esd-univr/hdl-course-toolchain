@@ -174,6 +174,46 @@ class TestDownloadableEntries(ManifestTestCase):
         self.assertEqual(problems, ["thing has archive_url but no archive_file"])
 
 
+class TestSoftwareView(ManifestTestCase):
+    def test_integrity_entries_are_not_software(self):
+        manifest = {
+            "tools": [
+                {"name": "hif-core", "version": "abc", "source": "upstream"},
+                {
+                    "name": "hif-core-archive",
+                    "version": "0" * 64,
+                    "source": "digest",
+                    "archive_url": "https://example.invalid/core.tar.gz",
+                },
+                {"name": "observed", "version": "1", "source": "observed"},
+            ]
+        }
+        self.assertEqual(
+            [entry["name"] for entry in versions.software_entries(manifest)],
+            ["hif-core"],
+        )
+
+    def test_tool_sections_are_derived_from_manifest_headings(self):
+        manifest_path, _ = self.write(
+            manifest=textwrap.dedent(
+                """
+                tools:
+                  # --- simulation and synthesis ---------------------------------
+                  - name: icarus-verilog
+                    version: v12_0
+                    source: upstream
+                  # --- coordinated HIF baseline ---------------------------------
+                  - name: hif-core
+                    version: deadbeef
+                    source: upstream
+                """
+            )
+        )
+        sections = versions.manifest_sections(manifest_path)
+        self.assertEqual(sections["icarus-verilog"], "simulation and synthesis")
+        self.assertEqual(sections["hif-core"], "coordinated HIF baseline")
+
+
 class TestTheRealManifest(unittest.TestCase):
     """The manifest actually shipped must match the Containerfile actually shipped."""
 

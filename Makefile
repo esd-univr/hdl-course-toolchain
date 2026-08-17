@@ -4,23 +4,32 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-.PHONY: help check fetch build doctor shell export sif clean
+.PHONY: help software check fetch build doctor shell export sif clean
 
 help: ## Show the available commands
 	@printf 'HDL Course Toolchain\n\n'
-	@printf '  make check   Validate the repository without building the image\n'
-	@printf '  make fetch   Download and verify pinned source archives\n'
-	@printf '  make build   Fetch sources and build the OCI image\n'
-	@printf '  make doctor  Run functional smoke tests inside the built image\n'
-	@printf '  make shell   Open an interactive shell in the built image\n'
-	@printf '  make export  Export the OCI image as a docker-archive\n'
-	@printf '  make sif     Build the Apptainer SIF from the OCI image\n'
-	@printf '  make clean   Remove local build artifacts under .out/\n'
+	@printf 'Inspect\n'
+	@printf '  make software  Show planned software, versions, sources, and architecture\n'
+	@printf '  make check     Run fast repository consistency checks\n'
+	@printf '\nBuild\n'
+	@printf '  make fetch     Download and verify pinned source archives\n'
+	@printf '  make build     Fetch sources and build the OCI image\n'
+	@printf '\nRun\n'
+	@printf '  make doctor    Run functional smoke tests inside the OCI image\n'
+	@printf '  make shell     Open an interactive shell inside the OCI image\n'
+	@printf '\nArtifacts\n'
+	@printf '  make export    Export the OCI image as a docker-archive\n'
+	@printf '  make sif       Build the Apptainer SIF from the OCI image\n'
+	@printf '\nMaintenance\n'
+	@printf '  make clean     Remove generated artifacts under .out/\n'
+
+software: ## Show the planned software inventory
+	@$(PYTHON) scripts/versions.py --format software
 
 check: ## Run fast repository checks
 	@printf '==> unit tests\n'
 	@$(PYTHON) -m unittest discover -s scripts
-	@printf '    OK  13 tests passed\n'
+	@printf '    OK  unit tests passed\n'
 	@printf '==> manifest\n'
 	@$(PYTHON) scripts/versions.py --format check | sed 's/^/    /'
 	@printf '==> shell syntax\n'
