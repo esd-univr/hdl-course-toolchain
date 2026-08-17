@@ -43,6 +43,15 @@ make shell
 The launcher mounts the selected workspace at `/work` and disables network
 access by default.
 
+## Consuming the toolchain
+
+Course repositories should consume a qualified release of this toolchain rather
+than track `main`. A course qualification is therefore associated with a
+specific toolchain release and, when distributed as an OCI image, preferably an
+immutable image digest.
+
+`main` is the development line for the next shared-infrastructure revision.
+
 ## Software inventory
 
 `versions.yml` is the single source of truth for pinned tool versions, source
@@ -81,6 +90,12 @@ commits at `/opt/hif/BUILD_PINS.txt`.
 HARM is likewise built from pinned source inputs and records its authoritative
 build tuple at `/opt/harm/BUILD_PINS.txt`. The functional doctor exercises the
 qualified Verilator VCD -> HARM -> SVA path.
+
+Reproducibility here refers to the toolchain inputs and installed environment.
+HARM v3 mining itself is not output-deterministic: identical runs may produce
+different top-ranked candidate sets, including with `--max-threads 1`.
+Qualification therefore checks successful mining and meaningful SVA production,
+not byte-identical miner output.
 
 `make check` performs the fast repository-level validation. It does not replace
 an image build or the functional doctor.
@@ -124,6 +139,10 @@ revision.
 
 A successful doctor means the shared environment is healthy; it does not by
 itself qualify every consuming course.
+
+Release qualification is currently performed on `linux/amd64`. Architecture
+support reported by individual tools in `make software` does not imply that the
+complete toolchain has been qualified on that architecture.
 
 ## Repository layout
 
