@@ -1,0 +1,21 @@
+export ZSH=/opt/oh-my-zsh
+export ZSH_CUSTOM=/opt/oh-my-zsh/custom
+
+ZSH_THEME="crcandy"
+DISABLE_AUTO_UPDATE="true"
+DISABLE_UPDATE_PROMPT="true"
+
+plugins=(
+  zsh-syntax-highlighting
+)
+
+HISTFILE="${HOME}/.stc-container/zsh_history"
+HISTSIZE=5000
+SAVEHIST=5000
+
+setopt HIST_IGNORE_DUPS
+setopt HIST_REDUCE_BLANKS
+setopt SHARE_HISTORY
+setopt INTERACTIVE_COMMENTS
+
+source "$ZSH/oh-my-zsh.sh"

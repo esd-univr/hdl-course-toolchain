@@ -19,19 +19,29 @@ if [ ! -d "${HOME:-/nonexistent}" ]; then
     export HOME
 fi
 
-# The container is run with the invoking user's uid so that generated files
-# belong to the student, but that uid has no entry in the image's /etc/passwd.
-# Without one, whoami fails and Python's getpass.getuser() raises KeyError.
-# Add a synthetic entry when the root filesystem allows it. Under Apptainer
-# this code does not run at all, and it does not need to: that installation
-# has `config passwd = yes` and synthesises the host user's entry itself.
+# The container runs with the invoking user's numeric uid/gid so generated
+# files remain owned by the student on the host.  Those ids normally have no
+# names inside the immutable image.  nss_wrapper provides a synthetic
+# `student` identity without modifying /etc/passwd or /etc/group.
 if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
-    if [ -w /etc/passwd ]; then
-        printf 'student:x:%s:%s:Course user:%s:/bin/bash\n' \
-            "$(id -u)" "$(id -g)" "${HOME}" >> /etc/passwd
+    nss_dir="${TMPDIR:-/tmp}/nss"
+    mkdir -p "${nss_dir}"
+    cp /etc/passwd "${nss_dir}/passwd"
+    cp /etc/group "${nss_dir}/group"
+
+    printf 'student:x:%s:%s:Course student:%s:/bin/bash\n' \
+        "$(id -u)" "$(id -g)" "${HOME}" >> "${nss_dir}/passwd"
+
+    if ! getent group "$(id -g)" >/dev/null 2>&1; then
+        printf 'student:x:%s:\n' "$(id -g)" >> "${nss_dir}/group"
     fi
-    [ -n "${USER:-}" ]    || { USER=student;    export USER; }
-    [ -n "${LOGNAME:-}" ] || { LOGNAME=student; export LOGNAME; }
+
+    NSS_WRAPPER_PASSWD="${nss_dir}/passwd"
+    NSS_WRAPPER_GROUP="${nss_dir}/group"
+    LD_PRELOAD="/usr/lib/x86_64-linux-gnu/libnss_wrapper.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+    USER=student
+    LOGNAME=student
+    export NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP LD_PRELOAD USER LOGNAME
 fi
 
 exec "$@"

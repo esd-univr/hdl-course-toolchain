@@ -10,5 +10,6 @@
 # no matter what the caller inherited. That is the whole point: the image is
 # supposed to be the toolchain.
 VIRTUAL_ENV=/opt/venv
+ZDOTDIR=/opt/toolchain/zsh
 PATH=/opt/venv/bin:/opt/toolchain/bin:/opt/hif/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
-export VIRTUAL_ENV PATH
+export VIRTUAL_ENV ZDOTDIR PATH

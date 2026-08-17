@@ -286,7 +286,7 @@ ARG GTKWAVE_APT_VERSION
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        build-essential \
+        build-essential libnss-wrapper zsh \
         libreadline8 zlib1g libffi8 tcl8.6 libgomp1 perl python3-dev \
         libpython3.10 libcurl4 libedit2 libsqlite3-0 libxml2 libz3-4 \
         "ngspice=${NGSPICE_APT_VERSION}" \
@@ -368,7 +368,19 @@ RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
         echo ok > "/opt/toolchain/status/${tool}.status"; \
     done
 
+# Frozen interactive shell environment.
+RUN git clone https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
+ && git -C /opt/oh-my-zsh checkout 97e11051e2f8053b1d694788d1cb4b0dbb1e2365 \
+ && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
+        /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting \
+ && git -C /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting \
+        checkout c4d95591843d49838b7ad30081e7aba3135a6703 \
+ && rm -rf /opt/oh-my-zsh/.git \
+           /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting/.git
+
 COPY container/profile.sh /etc/profile.d/stc-toolchain.sh
+RUN mkdir -p /opt/toolchain/zsh
+COPY container/zshrc /opt/toolchain/zsh/.zshrc
 COPY container/entrypoint.sh /opt/toolchain/bin/entrypoint.sh
 
 # The toolchain self-test. It runs inside the image, needs no network, and is

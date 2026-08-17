@@ -69,9 +69,12 @@ docker)
     # student rather than by root. --read-only makes the root filesystem match
     # the SIF's; /tmp and /var/tmp are supplied as tmpfs because a read-only
     # rootfs with no writable temp breaks ordinary tools.
-    exec docker run --rm -i \
+    tty=()
+    [ -t 0 ] && [ -t 1 ] && tty=(-t)
+    exec docker run --rm -i "${tty[@]}" \
         "${network[@]}" \
         --read-only \
+        --hostname toolchain \
         --tmpfs /tmp:rw,nosuid,nodev,exec \
         --tmpfs /var/tmp:rw,nosuid,nodev \
         --user "$(id -u):$(id -g)" \
