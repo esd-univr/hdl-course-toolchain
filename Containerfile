@@ -273,6 +273,37 @@ RUN set -eu; \
     tail -5 "${log}"
 
 # -----------------------------------------------------------------------------
+# Stage: builder-shell -- frozen interactive shell assets.
+#
+# Oh My Zsh and zsh-syntax-highlighting are unpacked from source archives
+# fetched and SHA-256 verified by the same mechanism used for the other pinned
+# sources. No git metadata or build-time network access reaches the runtime.
+# -----------------------------------------------------------------------------
+FROM base AS builder-shell
+ARG OH_MY_ZSH_REF
+ARG OH_MY_ZSH_SHA256
+ARG ZSH_SYNTAX_HIGHLIGHTING_REF
+ARG ZSH_SYNTAX_HIGHLIGHTING_SHA256
+
+COPY container/fetch.sh /usr/local/bin/fetch.sh
+COPY .out/sources/oh-my-zsh.tar.gz \
+     .out/sources/zsh-syntax-highlighting.tar.gz /src/archives/
+
+RUN chmod 0755 /usr/local/bin/fetch.sh \
+ && fetch.sh --local "${OH_MY_ZSH_SHA256}" \
+        /src/archives/oh-my-zsh.tar.gz \
+        /opt/oh-my-zsh --strip-components=1 \
+ && fetch.sh --local "${ZSH_SYNTAX_HIGHLIGHTING_SHA256}" \
+        /src/archives/zsh-syntax-highlighting.tar.gz \
+        /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting \
+        --strip-components=1 \
+ && chmod -R go-w /opt/oh-my-zsh \
+ && printf 'oh-my-zsh %s\nzsh-syntax-highlighting %s\n' \
+        "${OH_MY_ZSH_REF}" "${ZSH_SYNTAX_HIGHLIGHTING_REF}" \
+        > /opt/oh-my-zsh/BUILD_PINS.txt
+
+
+# -----------------------------------------------------------------------------
 # Stage: runtime -- the image that is actually run.
 #
 # It keeps a C++ compiler on purpose. Verilator and cocotb compile the design
@@ -369,14 +400,7 @@ RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
     done
 
 # Frozen interactive shell environment.
-RUN git clone https://github.com/ohmyzsh/ohmyzsh.git /opt/oh-my-zsh \
- && git -C /opt/oh-my-zsh checkout 97e11051e2f8053b1d694788d1cb4b0dbb1e2365 \
- && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
-        /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting \
- && git -C /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting \
-        checkout c4d95591843d49838b7ad30081e7aba3135a6703 \
- && rm -rf /opt/oh-my-zsh/.git \
-           /opt/oh-my-zsh/custom/plugins/zsh-syntax-highlighting/.git
+COPY --from=builder-shell /opt/oh-my-zsh/ /opt/oh-my-zsh/
 
 COPY container/profile.sh /etc/profile.d/stc-toolchain.sh
 RUN mkdir -p /opt/toolchain/zsh

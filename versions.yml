@@ -127,6 +127,37 @@ tools:
 
 
 
+  # --- interactive shell -----------------------------------------------------
+
+  - name: oh-my-zsh
+    arg: OH_MY_ZSH_REF
+    version: "97e11051e2f8053b1d694788d1cb4b0dbb1e2365"
+    source: https://github.com/ohmyzsh/ohmyzsh
+    arch: "architecture independent"
+    notes: >
+      Frozen interactive shell framework. Installed from a digest-verified
+      source archive; no updater or runtime network access is used.
+
+  - name: oh-my-zsh-archive
+    arg: OH_MY_ZSH_SHA256
+    version: "b07b00e3eb01a75751c93690c7afb9350e72684b9b3c63534b41416f4954960e"
+    source: SHA-256 of the Oh My Zsh source archive
+    archive_url: https://github.com/ohmyzsh/ohmyzsh/archive/97e11051e2f8053b1d694788d1cb4b0dbb1e2365.tar.gz
+    archive_file: oh-my-zsh.tar.gz
+
+  - name: zsh-syntax-highlighting
+    arg: ZSH_SYNTAX_HIGHLIGHTING_REF
+    version: "c4d95591843d49838b7ad30081e7aba3135a6703"
+    source: https://github.com/zsh-users/zsh-syntax-highlighting
+    arch: "architecture independent"
+
+  - name: zsh-syntax-highlighting-archive
+    arg: ZSH_SYNTAX_HIGHLIGHTING_SHA256
+    version: "3d26244d87547bd3755cf4b5739c643c76198559c2ae6267dcfc7825fa789ff5"
+    source: SHA-256 of the zsh-syntax-highlighting source archive
+    archive_url: https://github.com/zsh-users/zsh-syntax-highlighting/archive/c4d95591843d49838b7ad30081e7aba3135a6703.tar.gz
+    archive_file: zsh-syntax-highlighting.tar.gz
+
   # --- HIF, built from the published v1.1.0 sources ---------------------------
   #
   # Albion's development checkouts are deliberately not used. The point of this
