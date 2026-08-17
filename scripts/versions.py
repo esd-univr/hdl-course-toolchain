@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read toolchain/versions.yml and turn it into docker build arguments.
+"""Read versions.yml and turn it into docker build arguments.
 
 versions.yml is the only place a pinned version is written. This module is the
 bridge to the Containerfile, and its job is to make drift between the two

@@ -8,9 +8,9 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 toolchain="$(dirname "${here}")"
 
-IMAGE="${STC_IMAGE:-stc-toolchain}"
-TAG="${STC_TAG:-spike}"
-PLATFORM="${STC_PLATFORM:-linux/amd64}"
+IMAGE="${HDL_TOOLCHAIN_IMAGE:-hdl-course-toolchain}"
+TAG="${HDL_TOOLCHAIN_TAG:-spike}"
+PLATFORM="${HDL_TOOLCHAIN_PLATFORM:-linux/amd64}"
 
 mapfile -t build_args < <(python3 "${here}/versions.py" --format build-args | tr ' ' '\n')
 

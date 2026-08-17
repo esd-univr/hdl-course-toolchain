@@ -116,7 +116,7 @@ tools:
       course-relevant EDA packages above ARE pinned exactly.
 
   - name: python-packages
-    version: "see toolchain/requirements.txt"
+    version: "see requirements.txt"
     source: PyPI
     arch: "pure Python; no architecture restriction"
     notes: >

@@ -4,12 +4,12 @@
 # This runs for `docker run`. It deliberately does NOT run for
 # `apptainer exec`, which ignores the OCI entrypoint -- so anything that must
 # hold under both engines lives in profile.sh (sourced below and by the SIF's
-# %environment block) or is set by toolchain/bin/stc-container, which is the
+# %environment block) or is set by bin/hdl-toolchain, which is the
 # supported way to launch either engine.
 set -eu
 
 # The single canonical environment definition.
-. /etc/profile.d/stc-toolchain.sh
+. /etc/profile.d/hdl-course-toolchain.sh
 
 # The image is immutable and contains no course material. Everything a lab
 # writes must land in the bind-mounted workspace, so HOME points there unless

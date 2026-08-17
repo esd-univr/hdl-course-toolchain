@@ -1,7 +1,7 @@
-# Systems Testing and Certification toolchain environment.
+# HDL course toolchain environment.
 #
 # This is the ONE canonical definition of the toolchain environment. It is
-# installed as /etc/profile.d/stc-toolchain.sh and everything else sources it:
+# installed as /etc/profile.d/hdl-course-toolchain.sh and everything else sources it:
 # the OCI entrypoint, the Apptainer %environment block, and login shells. Do
 # not restate PATH anywhere else -- an earlier revision of this spike stated it
 # in four places and they had already drifted apart.

@@ -10,9 +10,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out="$(dirname "${here}")/.out"
 mkdir -p "${out}"
 
-IMAGE="${STC_IMAGE:-stc-toolchain}"
-TAG="${STC_TAG:-spike}"
-archive="${out}/stc-toolchain-${TAG}.tar"
+IMAGE="${HDL_TOOLCHAIN_IMAGE:-hdl-course-toolchain}"
+TAG="${HDL_TOOLCHAIN_TAG:-spike}"
+archive="${out}/hdl-course-toolchain-${TAG}.tar"
 
 echo "==> exporting ${IMAGE}:${TAG} to ${archive}"
 docker save --output "${archive}" "${IMAGE}:${TAG}"

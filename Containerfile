@@ -1,15 +1,15 @@
 # syntax=docker/dockerfile:1.7
 # -----------------------------------------------------------------------------
-# Systems Testing and Certification -- candidate course toolchain.
+# HDL course toolchain.
 #
 # This file is the canonical build description for the course environment. An
 # Apptainer SIF is derived from the image it produces rather than installing
-# anything a second time; see toolchain/apptainer/stc-toolchain.def.
+# anything a second time; see apptainer/hdl-course-toolchain.def.
 #
-# Every version this file consumes is pinned in toolchain/versions.yml and
+# Every version this file consumes is pinned in versions.yml and
 # passed in as a build argument. The ARGs deliberately have no defaults, so a
 # missing pin fails the build instead of silently resolving to "latest".
-# toolchain/scripts/versions.py refuses to let the two files drift apart.
+# scripts/versions.py refuses to let the two files drift apart.
 #
 # Ubuntu 22.04 rather than 24.04: the only official OpenROAD binary channel
 # publishes an ubuntu-22.04 .deb that needs libpython3.10 and the pre-t64
@@ -402,7 +402,7 @@ RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
 # Frozen interactive shell environment.
 COPY --from=builder-shell /opt/oh-my-zsh/ /opt/oh-my-zsh/
 
-COPY container/profile.sh /etc/profile.d/stc-toolchain.sh
+COPY container/profile.sh /etc/profile.d/hdl-course-toolchain.sh
 RUN mkdir -p /opt/toolchain/zsh
 COPY container/zshrc /opt/toolchain/zsh/.zshrc
 COPY container/entrypoint.sh /opt/toolchain/bin/entrypoint.sh
@@ -414,7 +414,7 @@ COPY doctor/ /opt/toolchain/doctor/
 RUN printf '#!/bin/sh\nexec /opt/venv/bin/python3 /opt/toolchain/doctor/toolchain_doctor.py "$@"\n' \
       > /opt/toolchain/bin/toolchain-doctor \
  && chmod 0755 /opt/toolchain/bin/entrypoint.sh /opt/toolchain/bin/toolchain-doctor \
-                /etc/profile.d/stc-toolchain.sh \
+                /etc/profile.d/hdl-course-toolchain.sh \
  && ldconfig
 
 # Record exactly which archive packages this image resolved to. The generic

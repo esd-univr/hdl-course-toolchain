@@ -8,7 +8,7 @@
 #     read-only. `--read-only` makes Docker match, so a tool that writes into
 #     the image fails in testing rather than only in front of a student.
 #   - Apptainer ignores the OCI ENTRYPOINT, so environment setup has to be
-#     driven from here and from /etc/profile.d/stc-toolchain.sh.
+#     driven from here and from /etc/profile.d/hdl-course-toolchain.sh.
 #   - `--containall` does NOT disable networking. Only `--net --network none`
 #     does, and it works unprivileged with this Apptainer installation.
 #
@@ -18,23 +18,23 @@
 # cleanable rather than hidden in the container.
 set -euo pipefail
 
-IMAGE="${STC_IMAGE:-stc-toolchain}"
-TAG="${STC_TAG:-spike}"
-ENGINE="${STC_ENGINE:-docker}"
-SIF="${STC_SIF:-toolchain/.out/stc-toolchain.sif}"
+IMAGE="${HDL_TOOLCHAIN_IMAGE:-hdl-course-toolchain}"
+TAG="${HDL_TOOLCHAIN_TAG:-spike}"
+ENGINE="${HDL_TOOLCHAIN_ENGINE:-docker}"
+SIF="${HDL_TOOLCHAIN_SIF:-.out/hdl-course-toolchain.sif}"
 WORKSPACE=""
 ALLOW_NETWORK="no"
 
 usage() {
     cat >&2 <<'EOF'
-usage: stc-container [options] -- COMMAND [ARGS...]
+usage: hdl-toolchain [options] -- COMMAND [ARGS...]
 
   --workspace DIR   host directory to mount at /work (required)
   --engine ENGINE   docker (default) or apptainer
   --sif PATH        SIF to use with --engine apptainer
   --network         allow network access (denied by default, both engines)
 
-Environment: STC_IMAGE, STC_TAG, STC_ENGINE, STC_SIF.
+Environment: HDL_TOOLCHAIN_IMAGE, HDL_TOOLCHAIN_TAG, HDL_TOOLCHAIN_ENGINE, HDL_TOOLCHAIN_SIF.
 EOF
     exit 2
 }

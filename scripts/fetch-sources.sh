@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download the pinned source archives to toolchain/.out/sources/.
+# Download the pinned source archives to .out/sources/.
 #
 # The archives are fetched here rather than inside the image build. Large
 # transfers from inside the container stalled repeatedly on this host while the

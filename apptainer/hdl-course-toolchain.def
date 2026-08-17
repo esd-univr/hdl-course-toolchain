@@ -1,7 +1,7 @@
-# Apptainer image for the Systems Testing and Certification toolchain.
+# Apptainer image for the HDL course toolchain.
 #
 # This deliberately installs nothing. It bootstraps from the docker-archive
-# exported from the OCI image built by toolchain/Containerfile, so there is
+# exported from the OCI image built by Containerfile, so there is
 # exactly one toolchain installation to maintain and the two artifacts cannot
 # drift apart. Build it with:
 #
@@ -13,16 +13,16 @@ Bootstrap: docker-archive
 From: {{ARCHIVE}}
 
 %labels
-    org.opencontainers.image.title       systems-testing-certification-toolchain
+    org.opencontainers.image.title       hdl-course-toolchain
     org.opencontainers.image.description Candidate course toolchain (validation spike)
-    stc.derived-from                     toolchain/Containerfile
-    stc.versions                         toolchain/versions.yml
+    toolchain.derived-from                     Containerfile
+    toolchain.versions                         versions.yml
 
 %environment
     # Apptainer ignores the OCI ENTRYPOINT, so the entrypoint's environment
     # setup never runs here. Source the one canonical definition instead of
     # restating PATH, which is how the two used to drift apart.
-    . /etc/profile.d/stc-toolchain.sh
+    . /etc/profile.d/hdl-course-toolchain.sh
 
 %runscript
     exec "$@"

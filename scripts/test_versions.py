@@ -6,7 +6,7 @@ Containerfile cannot silently disagree, because a pin that nothing consumes and
 an ARG that nothing pins are both build-breaking mistakes that are easy to make
 and hard to notice.
 
-Run with:  python3 -m unittest discover -s toolchain/scripts -v
+Run with:  python3 -m unittest discover -s scripts -v
 """
 from __future__ import annotations
 
