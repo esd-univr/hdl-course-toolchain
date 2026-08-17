@@ -78,6 +78,10 @@ HIF is pinned as one coordinated commit tuple across `hif-core`,
 `hif-frontend`, `hif-backend`, and `hif-muffin`; each image records those exact
 commits at `/opt/hif/BUILD_PINS.txt`.
 
+HARM is likewise built from pinned source inputs and records its authoritative
+build tuple at `/opt/harm/BUILD_PINS.txt`. The functional doctor exercises the
+qualified Verilator VCD -> HARM -> SVA path.
+
 `make check` performs the fast repository-level validation. It does not replace
 an image build or the functional doctor.
 

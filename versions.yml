@@ -251,6 +251,79 @@ tools:
       this baseline reliably. /opt/hif/BUILD_PINS.txt records the authoritative
       commit tuple embedded in each image.
 
+  # --- assertion mining ------------------------------------------------------
+
+  - name: harm
+    arg: HARM_REF
+    version: "e1586205e693826ff5b84f4e7097b3cff7e1025c"
+    source: https://github.com/SamueleGerminiani/harm
+    arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
+    notes: >
+      HARM v3 assertion miner. The qualified flow consumes Verilator VCD and
+      emits SVA. Top-N mining output is not byte-deterministic across identical
+      runs, including with --max-threads 1.
+
+  - name: harm-archive
+    arg: HARM_SHA256
+    version: "f0746f69162cc4175e93ee619e1c689950c9848659d9354e612e01950dfb7afd"
+    source: SHA-256 of the pinned HARM v3 source archive
+    archive_url: https://github.com/SamueleGerminiani/harm/archive/e1586205e693826ff5b84f4e7097b3cff7e1025c.tar.gz
+    archive_file: harm.tar.gz
+
+  - name: harm-cmake
+    arg: HARM_CMAKE_VERSION
+    version: "3.31.1"
+    source: https://cmake.org
+    arch: "build-time only; built from source"
+    notes: >
+      HARM v3 requires CMake 3.30 or newer; Ubuntu 22.04 ships an older CMake.
+
+  - name: harm-cmake-archive
+    arg: HARM_CMAKE_SHA256
+    version: "c4fc2a9bd0cd5f899ccb2fb81ec422e175090bc0de5d90e906dd453b53065719"
+    source: SHA-256 published for CMake 3.31.1
+    archive_url: https://cmake.org/files/v3.31/cmake-3.31.1.tar.gz
+    archive_file: harm-cmake.tar.gz
+
+  - name: harm-antlr4
+    arg: HARM_ANTLR_VERSION
+    version: "4.13.2"
+    source: https://www.antlr.org
+    arch: "build-time plus shared runtime library"
+
+  - name: harm-antlr4-archive
+    arg: HARM_ANTLR_SHA256
+    version: "0ed13668906e86dbc0dcddf30fdee68c10203dea4e83852b4edb810821bee3c4"
+    source: SHA-256 of the official ANTLR4 C++ runtime source distribution
+    archive_url: https://www.antlr.org/download/antlr4-cpp-runtime-4.13.2-source.zip
+    archive_file: harm-antlr4.zip
+
+  - name: harm-spot
+    arg: HARM_SPOT_VERSION
+    version: "2.9.7"
+    source: https://spot.lre.epita.fr
+    arch: "build-time plus libspot/libbddx runtime libraries"
+
+  - name: harm-spot-archive
+    arg: HARM_SPOT_SHA256
+    version: "1eea67e3446cdbbbb705ee6e26fd869020cdb7d82c563fead9cb4394b9baa04c"
+    source: SHA-256 of the Spot 2.9.7 release archive
+    archive_url: https://www.lrde.epita.fr/dload/spot/spot-2.9.7.tar.gz
+    archive_file: harm-spot.tar.gz
+
+  - name: harm-boost
+    arg: HARM_BOOST_VERSION
+    version: "1.83.0"
+    source: https://www.boost.org
+    arch: "build-time dependency; only Boost.Regex is built"
+
+  - name: harm-boost-archive
+    arg: HARM_BOOST_SHA256
+    version: "c0685b68dd44cc46574cce86c4e17c0f611b15e195be9848dfd0769a0a207628"
+    source: SHA-256 published by Boost for the 1.83.0 Unix source archive
+    archive_url: https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.gz
+    archive_file: harm-boost.tar.gz
+
   # --- optional ATPG / DFT / implementation tools ---------------------------
 
   - name: rust

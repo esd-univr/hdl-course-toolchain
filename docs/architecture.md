@@ -38,6 +38,17 @@ A floating HIF branch may be useful during upstream development, but it is not
 a toolchain input. Adopting a newer HIF baseline means updating the coordinated
 tuple and requalifying it before the toolchain pin moves.
 
+## HARM baseline
+
+HARM is pinned by commit together with the exact CMake, ANTLR4, Spot, and Boost
+inputs used to build it. The runtime image contains only the miner and its
+required shared libraries; build trees remain isolated in the builder stage.
+
+The toolchain qualifies the `Verilator -> VCD -> HARM -> SVA` path. HARM v3's
+top-N candidate ordering/set is not byte-deterministic across identical runs,
+including with `--max-threads 1`, so qualification checks successful mining and
+SVA production rather than exact textual equality.
+
 ## Validation layers
 
 Validation is intentionally split into two layers:

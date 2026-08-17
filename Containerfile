@@ -156,6 +156,94 @@ RUN { \
     } > /opt/hif/BUILD_PINS.txt
 
 # -----------------------------------------------------------------------------
+# Stage: builder-harm -- HARM v3 assertion miner and pinned dependencies.
+#
+# CMake, ANTLR4, Spot, and Boost are build inputs. Only the HARM executable and
+# shared libraries it needs are copied into the runtime image.
+# -----------------------------------------------------------------------------
+FROM base AS builder-harm
+ARG HARM_REF
+ARG HARM_SHA256
+ARG HARM_CMAKE_VERSION
+ARG HARM_CMAKE_SHA256
+ARG HARM_ANTLR_VERSION
+ARG HARM_ANTLR_SHA256
+ARG HARM_SPOT_VERSION
+ARG HARM_SPOT_SHA256
+ARG HARM_BOOST_VERSION
+ARG HARM_BOOST_SHA256
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential pkg-config uuid-dev unzip python3-dev libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY container/fetch.sh /usr/local/bin/fetch.sh
+COPY .out/sources/harm.tar.gz .out/sources/harm-cmake.tar.gz \
+     .out/sources/harm-antlr4.zip .out/sources/harm-spot.tar.gz \
+     .out/sources/harm-boost.tar.gz /src/archives/
+RUN chmod 0755 /usr/local/bin/fetch.sh \
+ && fetch.sh --local "${HARM_SHA256}" \
+        /src/archives/harm.tar.gz /src/harm --strip-components=1 \
+ && fetch.sh --local "${HARM_CMAKE_SHA256}" \
+        /src/archives/harm-cmake.tar.gz /src/cmake --strip-components=1 \
+ && fetch.sh --local "${HARM_SPOT_SHA256}" \
+        /src/archives/harm-spot.tar.gz /src/spot --strip-components=1 \
+ && fetch.sh --local "${HARM_BOOST_SHA256}" \
+        /src/archives/harm-boost.tar.gz /src/boost --strip-components=1 \
+ && actual="$(sha256sum /src/archives/harm-antlr4.zip | cut -d' ' -f1)" \
+ && [ "${actual}" = "${HARM_ANTLR_SHA256}" ] \
+ && mkdir -p /src/antlr4 \
+ && unzip -q /src/archives/harm-antlr4.zip -d /src/antlr4
+
+# HARM v3 requires CMake >= 3.30, newer than Ubuntu 22.04 provides.
+RUN cd /src/cmake \
+ && ./bootstrap --prefix=/opt/cmake \
+ && make -j"$(nproc)" \
+ && make install
+ENV PATH=/opt/cmake/bin:${PATH}
+
+# Install the exact dependency versions into the layout expected by HARM's
+# custom Find*.cmake modules.
+RUN cmake -S /src/antlr4 -B /src/antlr4/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DANTLR_BUILD_CPP_TESTS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/src/harm/third_party/antlr4 \
+ && cmake --build /src/antlr4/build -j"$(nproc)" \
+ && cmake --install /src/antlr4/build
+
+RUN cd /src/spot \
+ && ./configure --disable-python --prefix=/src/harm/third_party/spot \
+ && make -j"$(nproc)" \
+ && make install
+
+RUN cd /src/boost \
+ && ./bootstrap.sh \
+        --prefix=/src/harm/third_party/boost \
+        --with-libraries=regex \
+ && ./b2 -j"$(nproc)" --with-regex link=shared install
+
+RUN cmake -S /src/harm -B /src/harm/build -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build /src/harm/build -j"$(nproc)" \
+ && mkdir -p /dest/opt/harm/bin /dest/opt/harm/lib \
+ && cp /src/harm/build/harm /dest/opt/harm/bin/harm \
+ && cp -a /src/harm/third_party/spot/lib/libspot.so* /dest/opt/harm/lib/ \
+ && cp -a /src/harm/third_party/spot/lib/libbddx.so* /dest/opt/harm/lib/ \
+ && cp -a /src/harm/third_party/antlr4/lib/libantlr4-runtime.so* /dest/opt/harm/lib/ \
+ && if ls /src/harm/third_party/boost/lib/libboost_regex.so* >/dev/null 2>&1; then \
+        cp -a /src/harm/third_party/boost/lib/libboost_regex.so* /dest/opt/harm/lib/; \
+    fi \
+ && { \
+      echo "harm   ${HARM_REF}"; \
+      echo "cmake  ${HARM_CMAKE_VERSION}"; \
+      echo "antlr4 ${HARM_ANTLR_VERSION}"; \
+      echo "spot   ${HARM_SPOT_VERSION}"; \
+      echo "boost  ${HARM_BOOST_VERSION}"; \
+    } > /dest/opt/harm/BUILD_PINS.txt \
+ && LD_LIBRARY_PATH=/dest/opt/harm/lib /dest/opt/harm/bin/harm --help >/dev/null
+
+# -----------------------------------------------------------------------------
 # Stage: builder-rust -- Quaigh, an optional ATPG/logic-optimisation tool.
 # -----------------------------------------------------------------------------
 FROM base AS builder-rust
@@ -290,6 +378,11 @@ RUN apt-get update \
 COPY --from=builder-hif /opt/hif/ /opt/hif/
 RUN echo /opt/hif/lib > /etc/ld.so.conf.d/hif.conf && ldconfig
 
+# HARM runtime payload is deliberately small; its compiler/build trees stay
+# in builder-harm. ldconfig makes Spot/ANTLR/Boost libraries transparent.
+COPY --from=builder-harm /dest/opt/harm/ /opt/harm/
+RUN echo /opt/harm/lib > /etc/ld.so.conf.d/harm.conf && ldconfig
+
 # Python dependencies are installed from the resolved lock file.
 COPY requirements.txt /opt/toolchain/requirements.txt
 RUN python3 -m venv /opt/venv \
@@ -297,7 +390,7 @@ RUN python3 -m venv /opt/venv \
  && /opt/venv/bin/pip install --no-cache-dir -r /opt/toolchain/requirements.txt
 
 ENV VIRTUAL_ENV=/opt/venv \
-    PATH=/opt/venv/bin:/opt/toolchain/bin:/opt/hif/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+    PATH=/opt/venv/bin:/opt/toolchain/bin:/opt/hif/bin:/opt/harm/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 
 # Optional/candidate tools.
 COPY --from=builder-rust /dest/ /
@@ -339,7 +432,7 @@ RUN set -eu; \
 
 # Tools whose installation would already have aborted the build are recorded as
 # healthy here for the same status interface used by optional components.
-RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin \
+RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin harm \
                 verilog2hif hif2verilog cocotb pytest graphviz gtkwave; do \
         echo ok > "/opt/toolchain/status/${tool}.status"; \
     done

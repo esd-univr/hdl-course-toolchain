@@ -1,5 +1,6 @@
 .out/
 .toolchain/
 .local/
+obj_dir/
 __pycache__/
 *.py[cod]

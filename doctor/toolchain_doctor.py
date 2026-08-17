@@ -44,6 +44,7 @@ class Check:
     required: bool
     smoke: object = None  # callable(Path) -> (bool, str), or None
     version_pattern: str = ""
+    smoke_status: str = ""  # SELF, COVERED, VERSION when no direct callback is needed
 
 
 @dataclass
@@ -102,6 +103,80 @@ def head(text: str, limit: int = 300) -> str:
 # --- smoke tests -------------------------------------------------------------
 
 
+def smoke_make(workdir: Path):
+    makefile = workdir / "Makefile"
+    makefile.write_text(
+        "all: marker\n\n"
+        "marker:\n"
+        "\t@printf 'MAKE_SMOKE_OK\\n' > marker\n",
+        encoding="utf-8",
+    )
+    code, out = run(["make", "--no-print-directory"], cwd=workdir)
+    marker = workdir / "marker"
+    if code != 0 or not marker.is_file() or marker.read_text(encoding="utf-8").strip() != "MAKE_SMOKE_OK":
+        return False, f"make did not build the smoke target (rc={code}): {head(out)}"
+    return True, "built a real Makefile target"
+
+
+def smoke_git(workdir: Path):
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.name", "Toolchain Doctor"],
+        ["git", "config", "user.email", "doctor@example.invalid"],
+    ):
+        code, out = run(command, cwd=workdir)
+        if code != 0:
+            return False, f"git setup failed: {head(out)}"
+    (workdir / "smoke.txt").write_text("GIT_SMOKE_OK\n", encoding="utf-8")
+    code, out = run(["git", "add", "smoke.txt"], cwd=workdir)
+    if code != 0:
+        return False, f"git add failed: {head(out)}"
+    code, out = run(["git", "commit", "-q", "-m", "doctor smoke"], cwd=workdir)
+    if code != 0:
+        return False, f"git commit failed: {head(out)}"
+    code, out = run(["git", "rev-parse", "--verify", "HEAD"], cwd=workdir)
+    if code != 0 or not re.fullmatch(r"[0-9a-f]{40}\s*", out):
+        return False, f"git produced no valid commit: {head(out)}"
+    return True, "initialised a repository and created a commit"
+
+
+def smoke_jq(workdir: Path):
+    code, out = run(["jq", "-n", "{answer: (6 * 7)}"], cwd=workdir)
+    if code != 0:
+        return False, f"jq transformation failed: {head(out)}"
+    try:
+        parsed = json.loads(out)
+    except json.JSONDecodeError as error:
+        return False, f"jq output is not JSON: {error}"
+    if parsed != {"answer": 42}:
+        return False, f"jq returned the wrong value: {parsed!r}"
+    return True, "evaluated a JSON transformation"
+
+
+def smoke_pytest(workdir: Path):
+    (workdir / "test_smoke.py").write_text(
+        "def test_toolchain_pytest():\n"
+        "    assert 6 * 7 == 42\n",
+        encoding="utf-8",
+    )
+    code, out = run(["pytest", "-q", "test_smoke.py"], cwd=workdir)
+    if code != 0 or "1 passed" not in out:
+        return False, f"pytest did not execute the smoke test (rc={code}): {head(out)}"
+    return True, "collected and passed a Python test"
+
+
+def smoke_graphviz(workdir: Path):
+    source = workdir / "graph.dot"
+    output = workdir / "graph.svg"
+    source.write_text("digraph smoke { a -> b; }\n", encoding="utf-8")
+    code, out = run(["dot", "-Tsvg", source.name, "-o", output.name], cwd=workdir)
+    if code != 0 or not output.is_file():
+        return False, f"dot did not render SVG (rc={code}): {head(out)}"
+    if "<svg" not in output.read_text(encoding="utf-8", errors="replace"):
+        return False, "dot output is not an SVG document"
+    return True, "rendered a DOT graph to SVG"
+
+
 def smoke_iverilog(workdir: Path):
     assets(workdir, "hello.v")
     code, out = run(["iverilog", "-o", "hello.vvp", "hello.v"], cwd=workdir)
@@ -114,25 +189,54 @@ def smoke_iverilog(workdir: Path):
 
 
 def smoke_verilator(workdir: Path):
-    """Compile and run, not just lint.
+    """Compile/run Verilator and regress the HDL-level force/release fault path.
 
     Verilator emits C++ that is compiled at run time, so a lint-only check
-    would not notice a runtime image with no working C++ toolchain -- which is
-    exactly the risk of stripping build-essential out of the runtime stage.
+    would not notice a runtime image with no working C++ toolchain.  The second
+    case also protects the persistent stuck-at injection model qualified for
+    Systems Verification: HDL hierarchy, force/release, golden/faulty
+    divergence, and recovery after release.
     """
-    assets(workdir, "verilator_smoke.v")
+    assets(workdir, "verilator_smoke.v", "verilator_force_smoke.sv")
+
     code, out = run(
-        ["verilator", "--binary", "-j", "2", "-Wno-fatal", "verilator_smoke.v"], cwd=workdir
+        [
+            "verilator", "--binary", "-j", "2", "-Wno-fatal",
+            "--top-module", "verilator_smoke", "--Mdir", "obj_basic",
+            "verilator_smoke.v",
+        ],
+        cwd=workdir,
     )
     if code != 0:
         return False, f"verilator --binary failed: {head(out, 400)}"
-    binary = workdir / "obj_dir" / "Vverilator_smoke"
+    binary = workdir / "obj_basic" / "Vverilator_smoke"
     if not binary.is_file():
         return False, "verilator produced no executable"
     code, out = run([str(binary)], cwd=workdir)
     if "VERILATOR_SMOKE_OK" not in out:
         return False, f"the verilated model did not run: {head(out)}"
-    return True, "verilated a design, compiled it with the image's C++ toolchain, and ran it"
+
+    code, out = run(
+        [
+            "verilator", "--binary", "--timing", "-j", "2", "-Wno-fatal",
+            "--top-module", "verilator_force_smoke", "--Mdir", "obj_force",
+            "verilator_force_smoke.sv",
+        ],
+        cwd=workdir,
+    )
+    if code != 0:
+        return False, f"verilator force/release compile failed: {head(out, 400)}"
+    force_binary = workdir / "obj_force" / "Vverilator_force_smoke"
+    if not force_binary.is_file():
+        return False, "verilator produced no force/release smoke executable"
+    code, out = run([str(force_binary)], cwd=workdir)
+    if code != 0 or "VERILATOR_FORCE_SMOKE_OK" not in out:
+        return False, f"force/release fault smoke failed (rc={code}): {head(out, 400)}"
+
+    return True, (
+        "compiled and ran a design; HDL force/release created observable "
+        "golden/faulty divergence and recovered after release"
+    )
 
 
 def smoke_yosys(workdir: Path):
@@ -189,6 +293,52 @@ def smoke_hif(workdir: Path):
         f"round-tripped and2 through HIF and simulated it, "
         f"{len(faults['faults'])} fault(s) enumerated"
     )
+
+
+def smoke_harm(workdir: Path):
+    """Generate a Verilator VCD, mine it with HARM, and require SVA output."""
+    assets(workdir, "harm_smoke.sv")
+    code, out = run(
+        [
+            "verilator", "--binary", "--timing", "--trace", "-j", "2",
+            "-Wno-fatal", "--top-module", "harm_smoke", "--Mdir", "obj_harm",
+            "harm_smoke.sv",
+        ],
+        cwd=workdir,
+    )
+    if code != 0:
+        return False, f"Verilator trace build failed: {head(out, 400)}"
+    binary = workdir / "obj_harm" / "Vharm_smoke"
+    code, out = run([str(binary)], cwd=workdir)
+    trace = workdir / "harm-smoke.vcd"
+    if code != 0 or "HARM_TRACE_SMOKE_OK" not in out or not trace.is_file():
+        return False, f"Verilator produced no usable HARM trace (rc={code}): {head(out, 400)}"
+
+    code, out = run(
+        [
+            "harm", "--vcd", trace.name, "--vcd-ss", "harm_smoke", "--clk", "clk",
+            "--conf", "harm-smoke.xml", "--generate-config",
+        ],
+        cwd=workdir,
+    )
+    if code != 0 or not (workdir / "harm-smoke.xml").is_file():
+        return False, f"HARM config generation failed: {head(out, 400)}"
+
+    code, out = run(
+        [
+            "harm", "--vcd", trace.name, "--vcd-ss", "harm_smoke", "--clk", "clk",
+            "--conf", "harm-smoke.xml", "--sva", "--max-ass", "5",
+            "--max-threads", "1", "--silent", "--dump-to", "assertions.txt",
+        ],
+        cwd=workdir,
+    )
+    assertions = workdir / "assertions.txt"
+    if code != 0 or not assertions.is_file():
+        return False, f"HARM mining failed: {head(out, 400)}"
+    mined = assertions.read_text(encoding="utf-8")
+    if "always (" not in mined:
+        return False, f"HARM emitted no SVA assertions: {head(mined, 400)}"
+    return True, "mined SVA from a VCD generated by the pinned Verilator"
 
 
 def smoke_quaigh(workdir: Path):
@@ -276,29 +426,31 @@ def smoke_z3(workdir: Path):
 
 CHECKS = (
     # Required: what the course would actually stand on.
-    Check("python3", sys.executable, [sys.executable, "-V"], True),
-    Check("make", "make", ["make", "--version"], True),
-    Check("git", "git", ["git", "--version"], True),
-    Check("jq", "jq", ["jq", "--version"], True),
+    Check("python3", sys.executable, [sys.executable, "-V"], True, smoke_status="SELF"),
+    Check("make", "make", ["make", "--version"], True, smoke_make),
+    Check("git", "git", ["git", "--version"], True, smoke_git),
+    Check("jq", "jq", ["jq", "--version"], True, smoke_jq),
     Check("iverilog", "iverilog", ["iverilog", "-V"], True, smoke_iverilog),
-    Check("vvp", "vvp", ["vvp", "-V"], True),
+    Check("vvp", "vvp", ["vvp", "-V"], True, smoke_status="COVERED"),
     Check("verilator", "verilator", ["verilator", "--version"], True, smoke_verilator),
     Check("z3", "z3", ["z3", "--version"], True, smoke_z3),
     Check("cocotb", sys.executable, [sys.executable, "-c",
                                      "import cocotb; print(cocotb.__version__)"],
           True, smoke_cocotb),
-    Check("pytest", "pytest", ["pytest", "--version"], True),
+    Check("pytest", "pytest", ["pytest", "--version"], True, smoke_pytest),
     Check("yosys", "yosys", ["yosys", "-V"], True, smoke_yosys),
-    Check("verilog2hif", "verilog2hif", ["verilog2hif", "--version"], True),
-    Check("hif2verilog", "hif2verilog", ["hif2verilog", "--version"], True),
+    Check("verilog2hif", "verilog2hif", ["verilog2hif", "--version"], True, smoke_status="COVERED"),
+    Check("hif2verilog", "hif2verilog", ["hif2verilog", "--version"], True, smoke_status="COVERED"),
     Check("muffin", "muffin", ["muffin", "--version"], True, smoke_hif),
+    Check("harm", "harm", ["cat", "/opt/harm/BUILD_PINS.txt"], True, smoke_harm,
+          r"^harm\s+(.+)$"),
     Check("ngspice", "ngspice", ["ngspice", "--version"], True, smoke_ngspice),
     # Candidates: included in the kitchen sink, not yet depended on.
     Check("quaigh", "quaigh", ["quaigh", "--version"], False, smoke_quaigh),
     Check("fault", "fault", ["fault", "--version"], False, smoke_fault),
     Check("openroad", "openroad", ["openroad", "-version"], False, smoke_openroad),
-    Check("gtkwave", "gtkwave", ["gtkwave", "--version"], False),
-    Check("graphviz", "dot", ["dot", "-V"], False),
+    Check("gtkwave", "gtkwave", ["gtkwave", "--version"], False, smoke_status="VERSION"),
+    Check("graphviz", "dot", ["dot", "-V"], False, smoke_graphviz),
 )
 
 
@@ -332,7 +484,7 @@ def evaluate(check: Check, workdir: Path) -> Result:
     result.version = version_line(out, check.version_command, check.version_pattern)
 
     if check.smoke is None:
-        result.smoke = "n/a"
+        result.smoke = check.smoke_status or "n/a"
         result.ok = True
         return result
 
@@ -350,7 +502,7 @@ def render(results: list[Result], verbose: bool) -> None:
     print(f"  architecture : {platform.machine()}")
     print(f"  python       : {sys.version.split()[0]} at {sys.executable}")
     print()
-    print(f"{'':5}{'TOOL':<14}{'SMOKE':<7}VERSION")
+    print(f"{'':5}{'TOOL':<14}{'SMOKE':<9}VERSION")
     for result in results:
         if not result.found:
             mark = "MISS"
@@ -359,7 +511,7 @@ def render(results: list[Result], verbose: bool) -> None:
         else:
             mark = "FAIL"
         suffix = "" if result.required else "   (candidate)"
-        print(f"{mark:<5}{result.name:<14}{result.smoke:<7}{result.version}{suffix}")
+        print(f"{mark:<5}{result.name:<14}{result.smoke:<9}{result.version}{suffix}")
         if result.detail and (verbose or mark != "OK"):
             print(f"     {result.detail}")
         elif result.detail and verbose:
