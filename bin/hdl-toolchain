@@ -5,6 +5,21 @@
 # root environment, no network by default, and one writable workspace at /work.
 set -euo pipefail
 
+# A misspelled HDL_TOOLCHAIN_* variable used to be ignored in silence, so a
+# request for one engine could run in the other and still report success.
+# Anything unrecognised is refused instead.
+known_env="HDL_TOOLCHAIN_IMAGE HDL_TOOLCHAIN_TAG HDL_TOOLCHAIN_ENGINE HDL_TOOLCHAIN_SIF HDL_TOOLCHAIN_QUIET"
+for name in $(env | sed -n 's/^\(HDL_TOOLCHAIN_[A-Z0-9_]*\)=.*/\1/p'); do
+    case " ${known_env} " in
+        *" ${name} "*) ;;
+        *)
+            echo "error: unknown environment variable ${name}" >&2
+            echo "       recognised: ${known_env}" >&2
+            exit 2
+            ;;
+    esac
+done
+
 IMAGE="${HDL_TOOLCHAIN_IMAGE:-hdl-course-toolchain}"
 TAG="${HDL_TOOLCHAIN_TAG:-latest}"
 ENGINE="${HDL_TOOLCHAIN_ENGINE:-docker}"
@@ -42,6 +57,29 @@ done
 [ $# -gt 0 ]          || { echo "error: no command given" >&2; usage; }
 [ -d "${WORKSPACE}" ] || { echo "error: no such directory: ${WORKSPACE}" >&2; exit 2; }
 WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
+
+# Say exactly what is about to run. A doctor PASS is only meaningful together
+# with the identity of the artifact it inspected: a tag can still point at an
+# older image, and a SIF can predate the sources it was supposed to be built
+# from. Both failures are silent without this line.
+identify() {
+    [ -z "${HDL_TOOLCHAIN_QUIET:-}" ] || return 0
+    case "${ENGINE}" in
+        docker)
+            digest=$(docker image inspect "${IMAGE}:${TAG}" \
+                        --format '{{.Id}}' 2>/dev/null || echo "<not built>")
+            created=$(docker image inspect "${IMAGE}:${TAG}" \
+                        --format '{{.Created}}' 2>/dev/null | cut -c1-19)
+            printf '[hdl-toolchain] docker %s:%s %s built %s\n' \
+                "${IMAGE}" "${TAG}" "${digest#sha256:}" "${created:-?}" >&2
+            ;;
+        apptainer)
+            built=$(date -r "${SIF}" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo "?")
+            printf '[hdl-toolchain] apptainer %s built %s\n' "${SIF}" "${built}" >&2
+            ;;
+    esac
+}
+identify
 
 SCRATCH="${WORKSPACE}/.toolchain"
 mkdir -p \
