@@ -103,19 +103,22 @@ tools:
 
   - name: vcdtui
     arg: VCDTUI_REF
-    version: "v0.1.0"
+    version: "v0.2.0"
     source: https://github.com/Galfurian/vcdtui
     arch: "pure Python; architecture independent"
     notes: >
-      Primary waveform viewer for the HDL course toolchain. The v0.1.0 release
-      requires only Python 3.10+ standard library modules and provides both an
-      interactive terminal UI and deterministic non-interactive dumps.
+      Primary waveform viewer for the HDL course toolchain. Requires only
+      Python 3.10+ standard library modules and provides both an interactive
+      terminal UI and deterministic non-interactive dumps. v0.2.0 is the first
+      release that can open a trace written by the pinned Icarus Verilog:
+      v0.1.0 rejected every one of them with "unsupported value-change
+      directive $comment", which failed the vcdtui doctor smoke test.
 
   - name: vcdtui-archive
     arg: VCDTUI_SHA256
-    version: "206959a3fea788bf382468d6ef415073c6146781198aaee42ef07d44703d81b4"
-    source: SHA-256 of the vcdtui v0.1.0 release source archive
-    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.1.0.tar.gz
+    version: "cb3ae984850b40d9a66b798645ca9571257a86ce102e5356b9829416e1ad4868"
+    source: SHA-256 of the vcdtui v0.2.0 release source archive
+    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.2.0.tar.gz
     archive_file: vcdtui.tar.gz
     arch: "source; architecture independent"
 
