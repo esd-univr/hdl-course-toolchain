@@ -211,7 +211,7 @@ complete toolchain has been qualified on that architecture.
 ├── container/                # runtime shell and entrypoint
 ├── doctor/                   # functional health checks
 ├── docs/                     # architecture and maintenance notes
-└── scripts/                  # manifest, fetch, build, export, validation
+└── scripts/                  # manifest, updates, fetch, build, export, validation
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the repository boundary,
