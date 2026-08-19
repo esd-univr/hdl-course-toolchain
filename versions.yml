@@ -14,13 +14,20 @@
 #   arg           Containerfile ARG receiving this pin
 #   version       tag, commit, package version, or archive SHA-256
 #   source        upstream source or package channel
+#   upstream      where scripts/configure.py looks for newer versions:
+#                   github-release:owner/repo        latest published release
+#                   github-tag:owner/repo            latest tag
+#                   github-commit:owner/repo@branch  distance from a branch head
+#                   crates:name                      newest crates.io version
+#                   ubuntu:suite/source-package      newest Ubuntu archive version
+#                   manual                           no machine-readable source
 #   arch          known architecture support / qualification state
 #   archive_url   downloadable source or binary artifact
 #   archive_file  local filename used by scripts/fetch-sources.sh
 #   notes         reproducibility caveats and rationale
 
 manifest_version: 1
-recorded: 2026-08-17
+recorded: 2026-08-19
 
 tools:
   # --- base environment -------------------------------------------------------
@@ -29,6 +36,7 @@ tools:
     arg: BASE_IMAGE
     version: "ubuntu:22.04@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
     source: docker.io/library/ubuntu
+    upstream: manual
     arch: "multi-arch index: linux/amd64 and linux/arm64 manifests both present"
     notes: >
       Ubuntu 22.04 is retained because the available OpenROAD binary package
@@ -40,6 +48,7 @@ tools:
     arg: IVERILOG_REF
     version: "v12_0"
     source: https://github.com/steveicarus/iverilog
+    upstream: github-release:steveicarus/iverilog
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Built from source because Ubuntu 22.04 packages Icarus Verilog 11.0.
@@ -55,6 +64,7 @@ tools:
     arg: VERILATOR_REF
     version: "v5.036"
     source: https://github.com/verilator/verilator
+    upstream: github-tag:verilator/verilator
     arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
     notes: >
       Built from source because Ubuntu 22.04 packages Verilator 4.038, which is
@@ -71,6 +81,7 @@ tools:
     arg: YOSYS_REF
     version: "v0.66"
     source: https://github.com/YosysHQ/yosys
+    upstream: github-release:YosysHQ/yosys
     arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
     notes: >
       v0.66 is the last Makefile-based release compatible with the Ubuntu 22.04
@@ -93,26 +104,47 @@ tools:
     arg: NGSPICE_APT_VERSION
     version: "36+ds-1ubuntu0.1"
     source: ubuntu-22.04 archive
+    upstream: ubuntu:jammy/ngspice
     arch: "linux/amd64, linux/arm64"
 
   - name: graphviz
     arg: GRAPHVIZ_APT_VERSION
     version: "2.42.2-6ubuntu0.1"
     source: ubuntu-22.04 archive
+    upstream: ubuntu:jammy/graphviz
     arch: "linux/amd64, linux/arm64"
 
-  - name: gtkwave
-    arg: GTKWAVE_APT_VERSION
-    version: "3.3.104-2build1"
-    source: ubuntu-22.04 archive
-    arch: "linux/amd64, linux/arm64"
+  - name: vcdtui
+    arg: VCDTUI_REF
+    version: "v0.3.0"
+    source: https://github.com/Galfurian/vcdtui
+    upstream: github-release:Galfurian/vcdtui
+    arch: "pure Python; architecture independent"
     notes: >
-      Included as a convenience. GUI availability is host-dependent and is not
-      a hard requirement of the container qualification.
+      Primary waveform viewer for the HDL course toolchain. Requires only
+      Python 3.10+ standard library modules and provides both an interactive
+      terminal UI and deterministic non-interactive dumps. v0.2.0 was the
+      first release able to open a trace written by the pinned Icarus
+      Verilog; v0.1.0 rejected every one of them with "unsupported
+      value-change directive $comment" and so failed the doctor smoke test.
+      v0.3.0 adds --scope, which course material depends on: a testbench that
+      instantiates one DUT at two parameterisations repeats its port names at
+      three hierarchy paths, and without a scope those names either
+      over-select or have to be spelled out in full. Default --dump output is
+      unchanged from v0.2.0, so the doctor smoke test needs no edit.
+
+  - name: vcdtui-archive
+    arg: VCDTUI_SHA256
+    version: "3eeb865b157d14695c8ca4a35f0829bc4949e0db2aebb9c9708e9627ff612b85"
+    source: SHA-256 of the vcdtui v0.3.0 release source archive
+    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.3.0.tar.gz
+    archive_file: vcdtui.tar.gz
+    arch: "source; architecture independent"
 
   - name: python
     version: "3.10.12 (ubuntu-22.04 archive)"
     source: ubuntu-22.04 archive
+    upstream: manual
     arch: "linux/amd64, linux/arm64"
     notes: >
       Generic base packages are taken from the live Ubuntu archive and are not
@@ -123,6 +155,7 @@ tools:
   - name: python-packages
     version: "see requirements.txt"
     source: PyPI
+    upstream: manual
     arch: "pure Python; no architecture restriction"
     notes: >
       requirements.txt is the fully resolved lock installed by the image;
@@ -134,6 +167,7 @@ tools:
     arg: OH_MY_ZSH_REF
     version: "97e11051e2f8053b1d694788d1cb4b0dbb1e2365"
     source: https://github.com/ohmyzsh/ohmyzsh
+    upstream: github-commit:ohmyzsh/ohmyzsh@master
     arch: "architecture independent"
 
   - name: oh-my-zsh-archive
@@ -147,6 +181,7 @@ tools:
     arg: ZSH_SYNTAX_HIGHLIGHTING_REF
     version: "c4d95591843d49838b7ad30081e7aba3135a6703"
     source: https://github.com/zsh-users/zsh-syntax-highlighting
+    upstream: github-commit:zsh-users/zsh-syntax-highlighting@master
     arch: "architecture independent"
 
   - name: zsh-syntax-highlighting-archive
@@ -166,6 +201,7 @@ tools:
     arg: HIF_CORE_REF
     version: "0fc2751d1b4a2fc30fbedb14639e3ede7a6b7433"
     source: https://github.com/hif-project/hif-core
+    upstream: github-commit:hif-project/hif-core@main
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Needs Poco (Foundation, Util, XML). Upstream hard-codes /usr/local as its
@@ -182,6 +218,7 @@ tools:
     arg: HIF_FRONTEND_REF
     version: "43890f2b9f791252d0d72a41195d48f58d8c211b"
     source: https://github.com/hif-project/hif-frontend
+    upstream: github-commit:hif-project/hif-frontend@main
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Provides verilog2hif and vhdl2hif. Needs Flex and Bison.
@@ -197,6 +234,7 @@ tools:
     arg: HIF_BACKEND_REF
     version: "2c09a44f3c5e11d8035cbb6460e5643599f49ca1"
     source: https://github.com/hif-project/hif-backend
+    upstream: github-commit:hif-project/hif-backend@main
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Provides hif2verilog and hif2vhdl. The commit pin is the authoritative
@@ -213,6 +251,7 @@ tools:
     arg: HIF_MUFFIN_REF
     version: "dc2e8c4e45f680099ba0a764a59865a0e9f8388d"
     source: https://github.com/hif-project/hif-muffin
+    upstream: github-commit:hif-project/hif-muffin@main
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Provides muffin. Its Galfurian/json FetchContent dependency is still
@@ -230,6 +269,7 @@ tools:
     arg: HIF_JSON_REF
     version: "930f32d755b167b0f11a1fd9c284c75fb2724485"
     source: https://github.com/Galfurian/json
+    upstream: github-commit:Galfurian/json@main
     arch: "header-only C++; architecture independent"
     notes: >
       Reproducibility workaround for hif-muffin's floating GIT_TAG main. The
@@ -257,6 +297,7 @@ tools:
     arg: HARM_REF
     version: "e1586205e693826ff5b84f4e7097b3cff7e1025c"
     source: https://github.com/SamueleGerminiani/harm
+    upstream: github-commit:SamueleGerminiani/harm@main
     arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
     notes: >
       HARM v3 assertion miner. The qualified flow consumes Verilator VCD and
@@ -274,6 +315,7 @@ tools:
     arg: HARM_CMAKE_VERSION
     version: "3.31.1"
     source: https://cmake.org
+    upstream: github-release:Kitware/CMake
     arch: "build-time only; built from source"
     notes: >
       HARM v3 requires CMake 3.30 or newer; Ubuntu 22.04 ships an older CMake.
@@ -289,6 +331,7 @@ tools:
     arg: HARM_ANTLR_VERSION
     version: "4.13.2"
     source: https://www.antlr.org
+    upstream: github-release:antlr/antlr4
     arch: "build-time plus shared runtime library"
 
   - name: harm-antlr4-archive
@@ -302,6 +345,7 @@ tools:
     arg: HARM_SPOT_VERSION
     version: "2.9.7"
     source: https://spot.lre.epita.fr
+    upstream: manual
     arch: "build-time plus libspot/libbddx runtime libraries"
 
   - name: harm-spot-archive
@@ -315,6 +359,7 @@ tools:
     arg: HARM_BOOST_VERSION
     version: "1.83.0"
     source: https://www.boost.org
+    upstream: github-release:boostorg/boost
     arch: "build-time dependency; only Boost.Regex is built"
 
   - name: harm-boost-archive
@@ -330,6 +375,7 @@ tools:
     arg: RUST_VERSION
     version: "1.90.0"
     source: https://sh.rustup.rs (static.rust-lang.org)
+    upstream: github-release:rust-lang/rust
     arch: "build-time only; toolchains published for linux/amd64 and linux/arm64"
     notes: >
       Build-time dependency for Quaigh; it does not reach the runtime image.
@@ -338,6 +384,7 @@ tools:
     arg: QUAIGH_VERSION
     version: "0.0.6"
     source: crates.io (upstream https://github.com/Coloquinte/quaigh)
+    upstream: crates:quaigh
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
     notes: >
       Installed with --locked so the crate's Cargo.lock fixes its dependency
@@ -347,6 +394,7 @@ tools:
     arg: OPENROAD_DEB_RELEASE
     version: "2024-12-14"
     source: https://github.com/Precision-Innovations/OpenROAD/releases
+    upstream: github-release:Precision-Innovations/OpenROAD
     arch: "linux/amd64 only"
     notes: >
       This release provides the Ubuntu 22.04 binary package consumed by the
@@ -364,6 +412,7 @@ tools:
     arg: SWIFT_VERSION
     version: "5.9.2"
     source: https://download.swift.org
+    upstream: manual
     arch: "build-time toolchain; amd64 and aarch64 archives are published"
     notes: >
       Build-time dependency for Fault. The current image consumes the amd64
@@ -381,6 +430,7 @@ tools:
     arg: FAULT_REF
     version: "0.9.4"
     source: https://github.com/AUCOHL/Fault
+    upstream: github-release:AUCOHL/Fault
     arch: "linux/amd64 verified; built from source"
     notes: >
       Fault's Package.swift leaves several dependencies as open ranges, so this

@@ -4,13 +4,14 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-.PHONY: help software check fetch build doctor shell export sif clean
+.PHONY: help software check updates bump fetch build doctor shell export sif clean
 
 help: ## Show the available commands
 	@printf 'HDL Course Toolchain\n\n'
 	@printf 'Inspect\n'
 	@printf '  make software  Show planned software, versions, sources, and architecture\n'
 	@printf '  make check     Run fast repository consistency checks\n'
+	@printf '  make updates   Compare pinned versions against upstream (network)\n'
 	@printf '\nBuild\n'
 	@printf '  make fetch     Download and verify pinned source archives\n'
 	@printf '  make build     Fetch sources and build the OCI image\n'
@@ -21,6 +22,7 @@ help: ## Show the available commands
 	@printf '  make export    Export the OCI image as a docker-archive\n'
 	@printf '  make sif       Build the Apptainer SIF from the OCI image\n'
 	@printf '\nMaintenance\n'
+	@printf '  make bump      Bump one pin: make bump TOOL=yosys VERSION=v0.68\n'
 	@printf '  make clean     Remove generated artifacts under .out/\n'
 
 software: ## Show the planned software inventory
@@ -36,6 +38,12 @@ check: ## Run fast repository checks
 	@for file in bin/hdl-toolchain container/*.sh scripts/*.sh; do bash -n "$$file"; done
 	@printf '    OK  shell scripts parse cleanly\n'
 	@printf '\nRepository checks passed.\n'
+
+updates: ## Report pinned versions against upstream (network)
+	@$(PYTHON) scripts/configure.py check-updates $(if $(TOOL),--tool $(TOOL)) $(if $(REFRESH),--refresh)
+
+bump: ## Bump one pin: make bump TOOL=yosys VERSION=v0.68
+	@$(PYTHON) scripts/configure.py bump --tool "$(TOOL)" --version "$(VERSION)" $(if $(DRY_RUN),--dry-run)
 
 fetch: ## Download and verify source archives
 	@./scripts/fetch-sources.sh

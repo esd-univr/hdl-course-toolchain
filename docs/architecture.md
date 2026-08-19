@@ -28,6 +28,39 @@ between manifest pins and `Containerfile` ARGs.
 The OCI image is the canonical installed environment. The Apptainer SIF is
 derived from that image rather than built from a second installation recipe.
 
+## Moving a pin
+
+Pins are not edited by hand. `scripts/configure.py` owns both directions:
+
+```text
+upstream (GitHub, crates.io, Ubuntu archive)
+    |
+    v
+make updates            read-only: what is pinned vs what upstream publishes
+    |
+    v
+make bump TOOL=.. VERSION=..
+    |
+    v
+versions.yml            version, archive_url and SHA-256 rewritten together
+```
+
+Each software entry declares an `upstream:` field naming where newer versions
+are published, because the question differs by pin kind: a tag pin is compared
+against the latest release or tag, a commit pin is reported as its distance
+from a named branch, and `manual` marks a pin with no machine-readable source
+so it stays visible rather than silently unchecked. A commit pin on a project
+that does publish releases is reported as needing attention.
+
+`bump` derives the new archive URL from the version, downloads what that URL
+actually serves, and records the digest it computed. If the URL cannot be
+derived by substitution it refuses and leaves the manifest untouched, so a pin
+that would fail during `make fetch` is never written.
+
+`bump` stops at the manifest. It does not rebuild the image and does not run
+the doctor: adopting a new pin is a qualification decision, so `make build` and
+`make doctor` remain separate deliberate steps.
+
 ## HIF baseline
 
 HIF is treated as a coordinated multi-repository dependency. `hif-core`,

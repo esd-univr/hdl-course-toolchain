@@ -347,6 +347,24 @@ RUN chmod 0755 /usr/local/bin/fetch.sh \
         > /opt/oh-my-zsh/BUILD_PINS.txt
 
 # -----------------------------------------------------------------------------
+# Stage: builder-vcdtui -- primary terminal waveform viewer.
+# -----------------------------------------------------------------------------
+FROM base AS builder-vcdtui
+ARG VCDTUI_REF
+ARG VCDTUI_SHA256
+
+COPY container/fetch.sh /usr/local/bin/fetch.sh
+COPY .out/sources/vcdtui.tar.gz /src/archives/vcdtui.tar.gz
+
+RUN chmod 0755 /usr/local/bin/fetch.sh \
+ && fetch.sh --local "${VCDTUI_SHA256}" \
+        /src/archives/vcdtui.tar.gz /src/vcdtui --strip-components=1 \
+ && install -D -m 0755 /src/vcdtui/vcdtui.py /dest/usr/local/bin/vcdtui \
+ && install -D -m 0644 /src/vcdtui/LICENSE /dest/opt/vcdtui/LICENSE \
+ && printf 'vcdtui %s\n' "${VCDTUI_REF}" > /dest/opt/vcdtui/BUILD_PINS.txt \
+ && /dest/usr/local/bin/vcdtui --version
+
+# -----------------------------------------------------------------------------
 # Stage: runtime -- the image that is actually run.
 #
 # A C++ compiler remains intentionally: Verilator and cocotb compile designs at
@@ -355,7 +373,6 @@ RUN chmod 0755 /usr/local/bin/fetch.sh \
 FROM base AS runtime
 ARG NGSPICE_APT_VERSION
 ARG GRAPHVIZ_APT_VERSION
-ARG GTKWAVE_APT_VERSION
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -364,10 +381,10 @@ RUN apt-get update \
         libpython3.10 libcurl4 libedit2 libsqlite3-0 libxml2 libz3-4 \
         "ngspice=${NGSPICE_APT_VERSION}" \
         "graphviz=${GRAPHVIZ_APT_VERSION}" \
-        "gtkwave=${GTKWAVE_APT_VERSION}" \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder-eda /dest/ /
+COPY --from=builder-vcdtui /dest/ /
 
 # Poco is a runtime dependency of libhif. The ld.so.conf.d entry makes libhif
 # resolvable without requiring callers to set LD_LIBRARY_PATH.
@@ -432,8 +449,8 @@ RUN set -eu; \
 
 # Tools whose installation would already have aborted the build are recorded as
 # healthy here for the same status interface used by optional components.
-RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin harm \
-                verilog2hif hif2verilog cocotb pytest graphviz gtkwave; do \
+RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin harm vcdtui \
+                verilog2hif hif2verilog cocotb pytest graphviz; do \
         echo ok > "/opt/toolchain/status/${tool}.status"; \
     done
 
