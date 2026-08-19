@@ -20,7 +20,7 @@
 #   notes         reproducibility caveats and rationale
 
 manifest_version: 1
-recorded: 2026-08-17
+recorded: 2026-08-19
 
 tools:
   # --- base environment -------------------------------------------------------
@@ -109,6 +109,16 @@ tools:
     notes: >
       Included as a convenience. GUI availability is host-dependent and is not
       a hard requirement of the container qualification.
+
+  - name: vcdtui
+    version: "v0.1.0"
+    source: https://github.com/Galfurian/vcdtui/releases/tag/v0.1.0
+    arch: "pure Python; architecture independent"
+    notes: >
+      Standard-library-only terminal VCD inspector. This release is the planned
+      shared waveform-inspection frontend for all HDL course repositories. It
+      requires Python 3.10+ and provides deterministic non-interactive dumps as
+      well as an interactive terminal UI.
 
   - name: python
     version: "3.10.12 (ubuntu-22.04 archive)"
