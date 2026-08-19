@@ -120,6 +120,13 @@ tools:
       requires Python 3.10+ and provides deterministic non-interactive dumps as
       well as an interactive terminal UI.
 
+  - name: vcdtui-archive
+    version: "206959a3fea788bf382468d6ef415073c6146781198aaee42ef07d44703d81b4"
+    source: SHA-256 of the vcdtui v0.1.0 release source archive
+    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.1.0.tar.gz
+    archive_file: vcdtui.tar.gz
+    arch: "source; architecture independent"
+
   - name: python
     version: "3.10.12 (ubuntu-22.04 archive)"
     source: ubuntu-22.04 archive
