@@ -20,3 +20,7 @@ docker buildx build \
     "${build_args[@]}" \
     "$@" \
     "${toolchain}"
+
+# Record what this image was built from, so `make doctor` can refuse to inspect
+# an artifact that no longer matches its sources.
+"${here}/artifact-status.sh" --record docker

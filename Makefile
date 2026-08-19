@@ -4,7 +4,7 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-.PHONY: help software check updates bump fetch build doctor shell export sif clean
+.PHONY: help software check updates bump fetch build doctor doctor-sif shell export sif qualify clean
 
 help: ## Show the available commands
 	@printf 'HDL Course Toolchain\n\n'
@@ -16,8 +16,10 @@ help: ## Show the available commands
 	@printf '  make fetch     Download and verify pinned source archives\n'
 	@printf '  make build     Fetch sources and build the OCI image\n'
 	@printf '\nRun\n'
-	@printf '  make doctor    Run functional smoke tests inside the OCI image\n'
-	@printf '  make shell     Open an interactive shell inside the OCI image\n'
+	@printf '  make doctor     Run functional smoke tests inside the OCI image\n'
+	@printf '  make doctor-sif Run the same smoke tests inside the Apptainer SIF\n'
+	@printf '  make qualify    Full release qualification (build, both doctors, in order)\n'
+	@printf '  make shell      Open an interactive shell inside the OCI image\n'
 	@printf '\nArtifacts\n'
 	@printf '  make export    Export the OCI image as a docker-archive\n'
 	@printf '  make sif       Build the Apptainer SIF from the OCI image\n'
@@ -52,7 +54,12 @@ build: fetch ## Build the OCI image
 	@./scripts/build-image.sh
 
 doctor: ## Run the toolchain doctor in Docker
+	@./scripts/artifact-status.sh docker
 	@./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- toolchain-doctor
+
+doctor-sif: ## Run the toolchain doctor in the Apptainer SIF
+	@./scripts/artifact-status.sh apptainer
+	@./bin/hdl-toolchain --engine apptainer --workspace "$(WORKSPACE)" -- toolchain-doctor
 
 shell: ## Open an interactive shell in Docker
 	@./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- zsh -l
@@ -62,6 +69,30 @@ export: ## Export the OCI image for Apptainer
 
 sif: build ## Derive the Apptainer SIF from the OCI image
 	@./scripts/build-sif.sh
+
+qualify: ## Run the full release qualification in order
+	@printf '==> 1/5 repository checks\n'
+	@$(MAKE) --no-print-directory check
+	@printf '\n==> 2/5 OCI image\n'
+	@$(MAKE) --no-print-directory build
+	@printf '\n==> 3/5 Docker toolchain-doctor\n'
+	@$(MAKE) --no-print-directory doctor
+	@printf '\n==> 4/5 Apptainer SIF\n'
+	@$(MAKE) --no-print-directory sif
+	@printf '\n==> 5/5 Apptainer toolchain-doctor\n'
+	@$(MAKE) --no-print-directory doctor-sif
+	@printf '\n==> qualification summary\n'
+	@printf '    repository checks     PASS\n'
+	@printf '    OCI/Docker build      PASS\n'
+	@printf '    Docker doctor         PASS\n'
+	@printf '    Apptainer SIF build   PASS\n'
+	@printf '    Apptainer doctor      PASS\n'
+	@printf '    architecture          %s\n' "$$(uname -m)"
+	@printf '    image                 %s\n' \
+	    "$$(docker image inspect hdl-course-toolchain:latest --format '{{.Id}}' | cut -c8-19)"
+	@printf '    build inputs          %s\n' "$$(cat .out/build-inputs.docker.sha256 | cut -c1-12)"
+	@printf '    source commit         %s\n' "$$(git rev-parse HEAD)"
+	@printf '\nQualification passed. This block is the evidence for a release.\n'
 
 clean: ## Remove generated artifacts
 	@rm -rf .out

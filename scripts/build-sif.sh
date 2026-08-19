@@ -20,3 +20,7 @@ sed "s|{{ARCHIVE}}|${archive}|g" "${template}" > "${tmp}"
 
 echo "==> building ${SIF} from ${archive}"
 apptainer build --force "${SIF}" "${tmp}"
+
+# Record what this SIF was built from. Without it a stale SIF can report a
+# healthy doctor for tools it does not contain.
+"${here}/artifact-status.sh" --record apptainer
