@@ -101,26 +101,18 @@ tools:
     source: ubuntu-22.04 archive
     arch: "linux/amd64, linux/arm64"
 
-  - name: gtkwave
-    arg: GTKWAVE_APT_VERSION
-    version: "3.3.104-2build1"
-    source: ubuntu-22.04 archive
-    arch: "linux/amd64, linux/arm64"
-    notes: >
-      Included as a convenience. GUI availability is host-dependent and is not
-      a hard requirement of the container qualification.
-
   - name: vcdtui
+    arg: VCDTUI_REF
     version: "v0.1.0"
-    source: https://github.com/Galfurian/vcdtui/releases/tag/v0.1.0
+    source: https://github.com/Galfurian/vcdtui
     arch: "pure Python; architecture independent"
     notes: >
-      Standard-library-only terminal VCD inspector. This release is the planned
-      shared waveform-inspection frontend for all HDL course repositories. It
-      requires Python 3.10+ and provides deterministic non-interactive dumps as
-      well as an interactive terminal UI.
+      Primary waveform viewer for the HDL course toolchain. The v0.1.0 release
+      requires only Python 3.10+ standard library modules and provides both an
+      interactive terminal UI and deterministic non-interactive dumps.
 
   - name: vcdtui-archive
+    arg: VCDTUI_SHA256
     version: "206959a3fea788bf382468d6ef415073c6146781198aaee42ef07d44703d81b4"
     source: SHA-256 of the vcdtui v0.1.0 release source archive
     archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.1.0.tar.gz

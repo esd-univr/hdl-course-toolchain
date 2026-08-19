@@ -52,6 +52,25 @@ immutable image digest.
 
 `main` is the development line for the next shared-infrastructure revision.
 
+## Waveform inspection
+
+`vcdtui` is the required, container-native waveform viewer. It is installed as
+an ordinary command on `PATH`, so a generated trace can be inspected directly:
+
+```bash
+vcdtui build/waves/example.vcd
+```
+
+Its deterministic non-interactive mode is also used by qualification:
+
+```bash
+vcdtui build/waves/example.vcd --signals clk,count --dump --ascii --no-color
+```
+
+GTKWave is not installed in the default image. Users may still open generated
+VCD files with any host-side viewer they prefer; course material should use
+`vcdtui` for the portable, qualified path.
+
 ## Software inventory
 
 `versions.yml` is the single source of truth for pinned tool versions, source

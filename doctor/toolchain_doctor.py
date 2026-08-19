@@ -177,6 +177,50 @@ def smoke_graphviz(workdir: Path):
     return True, "rendered a DOT graph to SVG"
 
 
+def smoke_vcdtui(workdir: Path):
+    """Generate a real VCD with Icarus and inspect it deterministically."""
+    source = workdir / "vcdtui_smoke.sv"
+    source.write_text(
+        "module vcdtui_smoke;\n"
+        "  reg clk;\n"
+        "  reg [1:0] count;\n"
+        "  initial begin\n"
+        "    $dumpfile(\"vcdtui-smoke.vcd\");\n"
+        "    $dumpvars(0, vcdtui_smoke);\n"
+        "    clk = 0; count = 0;\n"
+        "    #5 clk = 1; count = 1;\n"
+        "    #5 clk = 0; count = 2;\n"
+        "    #5 clk = 1; count = 3;\n"
+        "    #5 $finish;\n"
+        "  end\n"
+        "endmodule\n",
+        encoding="utf-8",
+    )
+    code, out = run(["iverilog", "-g2012", "-o", "vcdtui_smoke.vvp", source.name], cwd=workdir)
+    if code != 0:
+        return False, f"Icarus could not build the VCD producer: {head(out)}"
+    code, out = run(["vvp", "vcdtui_smoke.vvp"], cwd=workdir)
+    trace = workdir / "vcdtui-smoke.vcd"
+    if code != 0 or not trace.is_file():
+        return False, f"Icarus produced no VCD for vcdtui (rc={code}): {head(out)}"
+
+    code, out = run(
+        [
+            "vcdtui", trace.name,
+            "--signals", "clk,count",
+            "--dump", "--ascii", "--no-color",
+        ],
+        cwd=workdir,
+    )
+    if code != 0:
+        return False, f"vcdtui could not inspect the generated VCD: {head(out, 400)}"
+    if "signals: 2" not in out or "clk" not in out or "count" not in out:
+        return False, f"vcdtui omitted expected signals: {head(out, 400)}"
+    if not all(value in out for value in ("00", "01", "10", "11")):
+        return False, f"vcdtui omitted expected counter values: {head(out, 400)}"
+    return True, "parsed an Icarus VCD and rendered selected scalar/vector signals"
+
+
 def smoke_iverilog(workdir: Path):
     assets(workdir, "hello.v")
     code, out = run(["iverilog", "-o", "hello.vvp", "hello.v"], cwd=workdir)
@@ -433,6 +477,7 @@ CHECKS = (
     Check("iverilog", "iverilog", ["iverilog", "-V"], True, smoke_iverilog),
     Check("vvp", "vvp", ["vvp", "-V"], True, smoke_status="COVERED"),
     Check("verilator", "verilator", ["verilator", "--version"], True, smoke_verilator),
+    Check("vcdtui", "vcdtui", ["vcdtui", "--version"], True, smoke_vcdtui),
     Check("z3", "z3", ["z3", "--version"], True, smoke_z3),
     Check("cocotb", sys.executable, [sys.executable, "-c",
                                      "import cocotb; print(cocotb.__version__)"],
@@ -449,7 +494,6 @@ CHECKS = (
     Check("quaigh", "quaigh", ["quaigh", "--version"], False, smoke_quaigh),
     Check("fault", "fault", ["fault", "--version"], False, smoke_fault),
     Check("openroad", "openroad", ["openroad", "-version"], False, smoke_openroad),
-    Check("gtkwave", "gtkwave", ["gtkwave", "--version"], False, smoke_status="VERSION"),
     Check("graphviz", "dot", ["dot", "-V"], False, smoke_graphviz),
 )
 
