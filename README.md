@@ -96,6 +96,40 @@ For the exact Debian packages resolved inside a built image, see:
 Python dependencies are separately locked in
 [`requirements.txt`](requirements.txt).
 
+## Keeping the pins current
+
+Each software entry in `versions.yml` declares an `upstream:` field saying where
+newer versions are published. To compare every pin against what upstream serves
+today:
+
+```bash
+make updates
+```
+
+This is read-only and the only inventory command that uses the network. A pin to
+a git commit is reported as its distance from a named branch rather than as a
+version, and an entry declaring `manual` is listed as such instead of being
+silently skipped. Set `GITHUB_TOKEN` to raise the unauthenticated GitHub rate
+limit of 60 requests/hour; responses are cached under `.out/` for six hours, and
+`REFRESH=1` ignores that cache.
+
+To move one pin:
+
+```bash
+make bump TOOL=yosys VERSION=v0.68
+make bump TOOL=yosys VERSION=v0.68 DRY_RUN=1    # verify without writing
+```
+
+`bump` rewrites the version, derives the new archive URL from it, downloads what
+that URL actually serves, and records the SHA-256 it computed. If the URL cannot
+be derived from the version alone it refuses and leaves the manifest untouched,
+rather than writing a pin that would fail later during `make fetch`.
+
+`bump` deliberately stops there: it does not rebuild the image and does not run
+the doctor. Promoting a new pin is a qualification decision, so `make build` and
+`make doctor` stay separate, deliberate steps. Prose in `notes:` is not
+rewritten either — review it by hand.
+
 ## Reproducibility
 
 The build tooling checks that every bare `ARG` consumed by `Containerfile` has a
