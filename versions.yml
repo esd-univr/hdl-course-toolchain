@@ -46,7 +46,7 @@ tools:
 
   - name: icarus-verilog
     arg: IVERILOG_REF
-    version: "v12_0"
+    version: "v13_0"
     source: https://github.com/steveicarus/iverilog
     upstream: github-release:steveicarus/iverilog
     arch: "linux/amd64 verified; linux/arm64 not yet qualified"
@@ -55,14 +55,14 @@ tools:
 
   - name: icarus-verilog-archive
     arg: IVERILOG_SHA256
-    version: "a68cb1ef7c017ef090ebedb2bc3e39ef90ecc70a3400afb4aa94303bc3beaa7d"
+    version: "c897bbfa9848688982c6d5c30529fc29d68df0b9ff22ffa73bad89db73a7ce49"
     source: SHA-256 of the Icarus Verilog source archive
-    archive_url: https://github.com/steveicarus/iverilog/archive/refs/tags/v12_0.tar.gz
+    archive_url: https://github.com/steveicarus/iverilog/archive/refs/tags/v13_0.tar.gz
     archive_file: iverilog.tar.gz
 
   - name: verilator
     arg: VERILATOR_REF
-    version: "v5.036"
+    version: "v5.050"
     source: https://github.com/verilator/verilator
     upstream: github-tag:verilator/verilator
     arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
@@ -72,9 +72,9 @@ tools:
 
   - name: verilator-archive
     arg: VERILATOR_SHA256
-    version: "4199964882d56cf6a19ce80c6a297ebe3b0c35ea81106cd4f722342594337c47"
+    version: "ec6723f30c1798b1fbbbed97364f09c431fb4875577c314f37240e99b60a4a04"
     source: SHA-256 of the Verilator source archive
-    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.036.tar.gz
+    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.050.tar.gz
     archive_file: verilator.tar.gz
 
   - name: yosys
@@ -116,7 +116,7 @@ tools:
 
   - name: vcdtui
     arg: VCDTUI_REF
-    version: "v0.3.0"
+    version: "v0.4.0"
     source: https://github.com/Galfurian/vcdtui
     upstream: github-release:Galfurian/vcdtui
     arch: "pure Python; architecture independent"
@@ -135,9 +135,9 @@ tools:
 
   - name: vcdtui-archive
     arg: VCDTUI_SHA256
-    version: "3eeb865b157d14695c8ca4a35f0829bc4949e0db2aebb9c9708e9627ff612b85"
-    source: SHA-256 of the vcdtui v0.3.0 release source archive
-    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.3.0.tar.gz
+    version: "7c286222b5ee3eae59a9c61fa6bd75ba90df803b4b99c356e215d86ead38f018"
+    source: SHA-256 of the vcdtui v0.4.0 release source archive
+    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.4.0.tar.gz
     archive_file: vcdtui.tar.gz
     arch: "source; architecture independent"
 
