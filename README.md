@@ -109,9 +109,20 @@ make updates
 This is read-only and the only inventory command that uses the network. A pin to
 a git commit is reported as its distance from a named branch rather than as a
 version, and an entry declaring `manual` is listed as such instead of being
-silently skipped. Set `GITHUB_TOKEN` to raise the unauthenticated GitHub rate
-limit of 60 requests/hour; responses are cached under `.out/` for six hours, and
-`REFRESH=1` ignores that cache.
+silently skipped. `TOOL=<name>` narrows the report to one pin.
+
+Every run queries every upstream live, so the answer is never quietly out of
+date: a release cut an hour ago is precisely the one worth seeing. The cache
+under `.out/` is a fallback, not a shortcut. It is consulted only when an
+upstream cannot be reached — no network, or the GitHub rate limit exhausted —
+and such a row is printed as `unverified, cached 3h ago` and listed again in the
+summary, rather than being passed off as current.
+
+A full report costs about 18 requests to `api.github.com`. Unauthenticated that
+allows three runs an hour, so set `GITHUB_TOKEN` to raise the limit from 60
+requests/hour to 5000. The one thing remembered between runs is whether a
+project pinned to a commit publishes releases at all, which feeds an advisory
+line and changes on the scale of months; `REFRESH=1` re-probes those too.
 
 To move one pin:
 

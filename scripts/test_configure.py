@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -235,6 +237,137 @@ class TestBumpRefusals(unittest.TestCase):
         self._run(ROOT / "versions.yml", "bump", "--tool", "vcdtui-archive",
                   "--version", "x")
         self.assertEqual(before, (ROOT / "versions.yml").read_bytes())
+
+
+class TestFetcherFreshness(unittest.TestCase):
+    """`make updates` must never answer from cache without saying so.
+
+    The whole point of the report is "what does upstream publish right now?",
+    so these tests pin down that a lookup always goes to the network, that the
+    cache is reached for only when the network cannot be, and that such a row
+    is marked.
+    """
+
+    URL = "https://api.github.com/repos/example/widget/releases/latest"
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.cache_path = Path(self._directory.name) / "upstream-cache.json"
+
+    def _seed(self, entries: dict) -> None:
+        self.cache_path.write_text(json.dumps(entries), encoding="utf-8")
+
+    def _fetcher(self, responses, refresh: bool = False):
+        """A Fetcher whose network layer is a scripted list of outcomes."""
+        fetcher = configure.Fetcher(self.cache_path, refresh=refresh)
+        calls = []
+
+        def fake_get(url):
+            calls.append(url)
+            outcome = responses.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        fetcher._get = fake_get
+        fetcher.calls = calls
+        return fetcher
+
+    def test_a_recent_cache_entry_does_not_prevent_a_live_lookup(self):
+        self._seed({self.URL: {"at": time.time(), "body": {"tag_name": "v1"}}})
+        fetcher = self._fetcher([{"tag_name": "v2"}])
+        self.assertEqual(fetcher.json(self.URL), {"tag_name": "v2"})
+        self.assertEqual(fetcher.calls, [self.URL])
+        self.assertEqual(fetcher.fallbacks, [])
+
+    def test_an_unreachable_upstream_falls_back_and_is_recorded(self):
+        self._seed({self.URL: {"at": time.time() - 7200, "body": {"tag_name": "v1"}}})
+        fetcher = self._fetcher([configure.Unavailable("rate limited")])
+        self.assertEqual(fetcher.json(self.URL), {"tag_name": "v1"})
+        self.assertEqual(len(fetcher.fallbacks), 1)
+        url, age = fetcher.fallbacks[0]
+        self.assertEqual(url, self.URL)
+        self.assertAlmostEqual(age, 7200, delta=30)
+
+    def test_an_unreachable_upstream_with_nothing_cached_still_fails(self):
+        fetcher = self._fetcher([configure.Unavailable("offline")])
+        with self.assertRaises(configure.Unavailable):
+            fetcher.json(self.URL)
+
+    def test_a_404_is_an_answer_and_is_never_masked_by_the_cache(self):
+        """"This project publishes no releases" must not become "v1"."""
+        self._seed({self.URL: {"at": time.time() - 7200, "body": {"tag_name": "v1"}}})
+        fetcher = self._fetcher([configure.ConfigureError("HTTP 404 for " + self.URL)])
+        with self.assertRaises(configure.ConfigureError) as caught:
+            fetcher.json(self.URL)
+        self.assertIn("404", str(caught.exception))
+        self.assertEqual(fetcher.fallbacks, [])
+
+    def test_saving_keeps_entries_this_run_never_visited(self):
+        """A narrow run must not throw away the rest of the fallback store.
+
+        `make updates TOOL=x REFRESH=1` used to rewrite the file with the single
+        entry it had fetched, discarding the other pins' last known answers.
+        """
+        other = "https://api.github.com/repos/example/other/releases/latest"
+        self._seed({
+            self.URL: {"at": time.time() - 60, "body": {"tag_name": "v1"}},
+            other: {"at": time.time() - 60, "body": {"tag_name": "v9"}},
+        })
+        fetcher = self._fetcher([{"tag_name": "v2"}], refresh=True)
+        fetcher.json(self.URL)
+        fetcher.save()
+        saved = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(saved), sorted([self.URL, other]))
+        self.assertEqual(saved[other]["body"], {"tag_name": "v9"})
+
+    def test_a_slow_moving_fact_is_answered_without_a_request(self):
+        key = "fact:publishes-releases:example/widget"
+        self._seed({key: {"at": time.time() - 86400, "body": "v1.0"}})
+        fetcher = self._fetcher([])
+        computed = []
+        value = fetcher.fact(key, configure.CAPABILITY_TTL_SECONDS,
+                             lambda: computed.append(1) or "recomputed")
+        self.assertEqual(value, "v1.0")
+        self.assertEqual(computed, [])
+
+    def test_an_expired_fact_is_recomputed(self):
+        key = "fact:publishes-releases:example/widget"
+        stale = configure.CAPABILITY_TTL_SECONDS + 3600
+        self._seed({key: {"at": time.time() - stale, "body": "v1.0"}})
+        fetcher = self._fetcher([])
+        value = fetcher.fact(key, configure.CAPABILITY_TTL_SECONDS, lambda: "v2.0")
+        self.assertEqual(value, "v2.0")
+
+    def test_refresh_reprobes_a_fact_that_was_still_valid(self):
+        key = "fact:publishes-releases:example/widget"
+        self._seed({key: {"at": time.time(), "body": "v1.0"}})
+        fetcher = self._fetcher([], refresh=True)
+        self.assertEqual(
+            fetcher.fact(key, configure.CAPABILITY_TTL_SECONDS, lambda: "v2.0"),
+            "v2.0",
+        )
+
+    def test_an_advisory_served_from_cache_does_not_mark_the_row(self):
+        """The advisory is a footnote; only the version answer can go stale."""
+        key = "fact:publishes-releases:example/widget"
+        self._seed({self.URL: {"at": time.time() - 7200, "body": {"tag_name": "v1"}}})
+        fetcher = self._fetcher([configure.Unavailable("rate limited")])
+        value = fetcher.fact(key, configure.CAPABILITY_TTL_SECONDS,
+                             lambda: fetcher.json(self.URL)["tag_name"])
+        self.assertEqual(value, "v1")
+        self.assertEqual(fetcher.fallbacks, [])
+
+
+class TestAgeRendering(unittest.TestCase):
+    def test_ages_are_rendered_by_order_of_magnitude(self):
+        for seconds, expected in [
+            (5, "5s"), (89, "89s"), (600, "10m"), (3600, "1h"),
+            (7200, "2h"), (86400, "24h"), (5 * 86400, "5d"),
+        ]:
+            with self.subTest(seconds=seconds):
+                self.assertEqual(configure._humanise_age(seconds), expected)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,11 @@ Two subcommands, both driven entirely by versions.yml:
 
 ``check-updates``
     Ask every upstream what it publishes today and print it next to what is
-    pinned. Read-only; it never edits the manifest.
+    pinned. Read-only; it never edits the manifest. Every run queries every
+    upstream live, because a cached answer to "what is the newest release?" is
+    a wrong answer wearing a plausible face. The cache under ``.out/`` is only
+    a fallback for when an upstream cannot be reached, and rows served from it
+    say so.
 
 ``bump``
     Rewrite exactly one pin: the version, the paired archive URL, and the
@@ -58,12 +62,26 @@ ARG_SUFFIXES = ("_REF", "_VERSION", "_RELEASE")
 DIGEST_SUFFIX = "_SHA256"
 
 USER_AGENT = "hdl-course-toolchain-configure"
-CACHE_TTL_SECONDS = 6 * 3600
 HTTP_TIMEOUT = 30
+
+# "Does this project publish releases at all?" is a property of the project, not
+# of today's release list: it is stable for months and only feeds an advisory
+# line. Paying a request for it on every run would cost a third of the GitHub
+# budget, so it is the one answer allowed to come from cache unlabelled.
+CAPABILITY_TTL_SECONDS = 30 * 86400
 
 
 class ConfigureError(RuntimeError):
     """Something the operator has to decide or fix by hand."""
+
+
+class Unavailable(ConfigureError):
+    """Upstream could not be reached: rate limited, offline, timed out, or 5xx.
+
+    Kept distinct from an HTTP answer such as 404, because a 404 *is* an answer
+    ("this project publishes no releases") and must not be papered over with a
+    cached one.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -82,26 +100,48 @@ def _styles() -> dict[str, str]:
     )
 
 
+def _humanise_age(seconds: float) -> str:
+    """Render a cache age compactly: the order of magnitude is what matters."""
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds / 60)}m"
+    if seconds < 36 * 3600:
+        return f"{round(seconds / 3600)}h"
+    return f"{round(seconds / 86400)}d"
+
+
 # ---------------------------------------------------------------------------
 # HTTP with an on-disk cache
 
 
 class Fetcher:
-    """Small cached JSON getter.
+    """JSON getter that always goes to the network, with the cache as a fallback.
 
-    The GitHub API allows 60 unauthenticated requests per hour, and one full
-    report costs roughly half of that, so responses are cached and a
-    ``GITHUB_TOKEN`` in the environment is used when present.
+    ``make updates`` answers "what does upstream publish right now?", so an
+    answer that is merely recent is still the wrong answer -- a release cut an
+    hour ago is exactly the one worth seeing. Every version lookup is therefore
+    fetched fresh, and the on-disk cache is kept only for the two cases where
+    fresh is impossible: no network, or the GitHub rate limit exhausted. Rows
+    served from it are labelled with their age in the report rather than being
+    passed off as current.
+
+    The GitHub API allows 60 unauthenticated requests per hour and one full
+    report costs about a third of that, so a ``GITHUB_TOKEN`` in the
+    environment is used when present.
     """
 
-    def __init__(self, cache_path: Path, ttl: int = CACHE_TTL_SECONDS,
-                 refresh: bool = False) -> None:
+    def __init__(self, cache_path: Path, refresh: bool = False) -> None:
         self.cache_path = cache_path
-        self.ttl = ttl
         self.refresh = refresh
         self.token = os.environ.get("GITHUB_TOKEN", "")
         self.cache: dict[str, dict] = {}
-        if cache_path.is_file() and not refresh:
+        # Cached answers this run falls back to, as (key, age in seconds), so
+        # the report can name the rows it could not refresh.
+        self.fallbacks: list[tuple[str, float]] = []
+        # The cache is read even under --refresh: entries this run never
+        # revisits must survive save() instead of being silently dropped.
+        if cache_path.is_file():
             try:
                 self.cache = json.loads(cache_path.read_text(encoding="utf-8"))
             except (ValueError, OSError):
@@ -114,13 +154,56 @@ class Fetcher:
                 json.dumps(self.cache, indent=2, sort_keys=True), encoding="utf-8"
             )
         except OSError:
-            pass  # a warm cache is an optimisation, never a requirement
+            pass  # the fallback is a courtesy, never a requirement
+
+    def age(self, key: str) -> float | None:
+        """Seconds since ``key`` was stored, or None when it is not cached."""
+        entry = self.cache.get(key)
+        if not entry:
+            return None
+        return max(0.0, time.time() - float(entry["at"]))
 
     def json(self, url: str) -> object:
-        cached = self.cache.get(url)
-        if cached and time.time() - cached["at"] < self.ttl:
+        """Fetch ``url`` fresh; on unavailability reuse the last body received."""
+        try:
+            body = self._get(url)
+        except Unavailable:
+            age = self.age(url)
+            if age is None:
+                raise
+            self.fallbacks.append((url, age))
+            return self.cache[url]["body"]
+        self.cache[url] = {"at": time.time(), "body": body}
+        return body
+
+    def fact(self, key: str, max_age: float, compute):
+        """Memoise a slow-moving property of a project rather than a version.
+
+        See CAPABILITY_TTL_SECONDS for why one question gets this treatment. On
+        failure a stale fact beats no answer: being wrong here costs an advisory
+        line, never a wrong version.
+        """
+        cached = self.cache.get(key)
+        age = self.age(key)
+        if cached is not None and age is not None and age < max_age \
+                and not self.refresh:
             return cached["body"]
 
+        mark = len(self.fallbacks)
+        try:
+            value = compute()
+        except ConfigureError:
+            if cached is None:
+                raise
+            return cached["body"]
+        finally:
+            # An advisory served from cache does not make the version answer
+            # stale, so anything recorded here must not label the row.
+            del self.fallbacks[mark:]
+        self.cache[key] = {"at": time.time(), "body": value}
+        return value
+
+    def _get(self, url: str) -> object:
         request = urllib.request.Request(url, headers={
             "User-Agent": USER_AGENT,
             "Accept": "application/vnd.github+json",
@@ -130,19 +213,18 @@ class Fetcher:
 
         try:
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-                body = json.loads(response.read().decode("utf-8"))
+                return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             if error.code == 403 and "api.github.com" in url:
-                raise ConfigureError(
+                raise Unavailable(
                     "GitHub rate limit reached (60 requests/hour unauthenticated); "
                     "set GITHUB_TOKEN or retry later"
                 ) from error
+            if error.code >= 500:
+                raise Unavailable(f"HTTP {error.code} for {url}") from error
             raise ConfigureError(f"HTTP {error.code} for {url}") from error
         except (urllib.error.URLError, TimeoutError, ValueError) as error:
-            raise ConfigureError(f"{type(error).__name__} for {url}: {error}") from error
-
-        self.cache[url] = {"at": time.time(), "body": body}
-        return body
+            raise Unavailable(f"{type(error).__name__} for {url}: {error}") from error
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +238,9 @@ class Report:
         self.state = state          # current | update | attention | manual | error
         self.upstream = upstream    # what upstream publishes, for the report column
         self.note = note
+        # Age in seconds of the cached answer this row had to fall back to, or
+        # None when it was answered by a live request.
+        self.stale: float | None = None
 
 
 def parse_upstream(spec: str) -> tuple[str, str, str]:
@@ -209,8 +294,18 @@ def resolve(fetcher: Fetcher, spec: str, pinned: str) -> Report:
         ahead = int(body.get("ahead_by", 0))
         head = str(body.get("commits", [{}])[-1].get("sha", "") or "")[:7] if ahead else pinned[:7]
         # A commit pin on a project that does tag releases is worth surfacing:
-        # it is the case that rots silently.
-        tag = _github_releases(fetcher, locator)
+        # it is the case that rots silently. Whether the project publishes
+        # releases at all barely changes, so it is remembered rather than asked.
+        try:
+            tag = fetcher.fact(
+                f"fact:publishes-releases:{locator}",
+                CAPABILITY_TTL_SECONDS,
+                lambda: _github_releases(fetcher, locator),
+            )
+        except ConfigureError:
+            # The advisory is a footnote. Losing it must not discard the
+            # distance-from-branch answer, which is what the row is for.
+            tag = ""
         if tag:
             return Report(
                 "attention",
@@ -357,13 +452,16 @@ def command_check_updates(arguments, root: Path) -> int:
     undeclared = [e["name"] for e in software if "upstream" not in e]
 
     fetcher = Fetcher(root / ".out" / "upstream-cache.json",
-                      ttl=0 if arguments.refresh else CACHE_TTL_SECONDS,
                       refresh=arguments.refresh)
 
     print(f"{style['cyan']}{style['bold']}==>{style['reset']} "
           f"pinned versions against upstream")
     if fetcher.token:
-        print(f"    {style['dim']}using GITHUB_TOKEN{style['reset']}")
+        print(f"    {style['dim']}every upstream queried live, "
+              f"using GITHUB_TOKEN{style['reset']}")
+    else:
+        print(f"    {style['dim']}every upstream queried live; without "
+              f"GITHUB_TOKEN GitHub allows 60 requests/hour{style['reset']}")
     print()
 
     rows: list[tuple[str, str, str, Report]] = []
@@ -374,10 +472,16 @@ def command_check_updates(arguments, root: Path) -> int:
         pinned = entry.get("version", "")
         if arguments.tool and arguments.tool != name:
             continue
+        mark = len(fetcher.fallbacks)
         try:
             report = resolve(fetcher, entry["upstream"], pinned)
         except ConfigureError as error:
             report = Report("error", "-", str(error))
+        # Any answer this row had to take from cache makes the row itself
+        # unverified, and the oldest one is the honest age to show.
+        fell_back = fetcher.fallbacks[mark:]
+        if fell_back:
+            report.stale = max(age for _, age in fell_back)
         rows.append((name, pinned, entry["upstream"], report))
     fetcher.save()
 
@@ -399,22 +503,41 @@ def command_check_updates(arguments, root: Path) -> int:
         "attention": "attention", "error": "error", "manual": "manual",
     }
 
+    state_width = max(len(text) for text in label.values())
     print(f"    {style['bold']}{'TOOL':<{name_width}}  {'PINNED':<{pin_width}}  "
           f"{'UPSTREAM':<20}  STATE{style['reset']}")
     for name, pinned, _, report in rows:
         shown = pinned if len(pinned) <= pin_width else pinned[: pin_width - 1] + "…"
+        stale = ""
+        if report.stale is not None:
+            stale = (f"  {style['yellow']}unverified, cached "
+                     f"{_humanise_age(report.stale)} ago{style['reset']}")
+        # The state is padded to its widest label so that the staleness marker
+        # lines up into a column, but only when there is a marker to align:
+        # otherwise every fresh row would end in trailing blanks.
+        padding = " " * (state_width - len(label[report.state])) if stale else ""
         print(f"    {name:<{name_width}}  {shown:<{pin_width}}  "
               f"{report.upstream:<20}  "
-              f"{colour[report.state]}{label[report.state]}{style['reset']}")
+              f"{colour[report.state]}{label[report.state]}{style['reset']}"
+              f"{padding}{stale}")
         if report.note and report.state in ("attention", "error"):
             print(f"    {style['dim']}{'':<{name_width}}  {report.note}{style['reset']}")
 
     counts = {state: sum(1 for r in rows if r[3].state == state)
               for state in ("current", "update", "attention", "manual", "error")}
+    stale_rows = [r[0] for r in rows if r[3].stale is not None]
     print()
     print(f"    {counts['current']} current, {counts['update']} with an update, "
           f"{counts['attention']} needing attention, {counts['manual']} manual, "
           f"{counts['error']} unreachable")
+
+    if stale_rows:
+        print()
+        print(f"    {style['yellow']}{len(stale_rows)} row(s) could not be "
+              f"refreshed and show the last answer received, not today's:"
+              f"{style['reset']}")
+        for name in stale_rows:
+            print(f"      {name}")
 
     if undeclared:
         print()
@@ -426,7 +549,10 @@ def command_check_updates(arguments, root: Path) -> int:
     print()
     print(f"    {style['dim']}Nothing was modified. "
           f"Use: make bump TOOL=<name> VERSION=<version>{style['reset']}")
-    return 1 if counts["error"] else 0
+    # Exiting 0 must mean "this report is authoritative". A row that had to be
+    # answered from cache is not, so it is reported as a failure to check --
+    # which is a different thing from a failure of the pin.
+    return 1 if counts["error"] or stale_rows else 0
 
 
 def command_bump(arguments, root: Path) -> int:
@@ -558,7 +684,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     updates.add_argument("--tool", help="check a single tool by name")
     updates.add_argument("--refresh", action="store_true",
-                         help="ignore the cached upstream responses")
+                         help="also re-probe the month-old advisory facts "
+                              "(version lookups are always live)")
     updates.set_defaults(handler=command_check_updates)
 
     bump = subparsers.add_parser(
