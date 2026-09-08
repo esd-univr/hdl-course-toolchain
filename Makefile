@@ -4,6 +4,15 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
+# Local build + qualification run against this image name. `make build` produces
+# it, and `doctor` / `shell` / `doctor-sif` point the launcher straight at it
+# with --pull never, so a maintainer never needs the published GHCR image to
+# qualify a candidate. Release publishing uses the GHCR name and is driven by
+# scripts/release.sh and .github/workflows/release.yml, not by these targets.
+IMAGE ?= hdl-course-toolchain
+TAG   ?= latest
+SIF   ?= $(CURDIR)/.out/hdl-course-toolchain.sif
+
 .PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify release clean
 
 help: ## Show the available commands
@@ -68,24 +77,24 @@ fetch: ## Download and verify source archives
 	@./scripts/fetch-sources.sh
 
 build: fetch ## Build the OCI image
-	@./scripts/build-image.sh
+	@HDL_TOOLCHAIN_IMAGE=$(IMAGE) HDL_TOOLCHAIN_TAG=$(TAG) ./scripts/build-image.sh
 
 doctor: ## Run the toolchain doctor in Docker
 	@./scripts/artifact-status.sh docker
-	@./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- toolchain-doctor
+	@./bin/hdl-toolchain --image $(IMAGE):$(TAG) --pull never --workspace "$(WORKSPACE)" -- toolchain-doctor
 
 doctor-sif: ## Run the toolchain doctor in the Apptainer SIF
 	@./scripts/artifact-status.sh apptainer
-	@./bin/hdl-toolchain --engine apptainer --workspace "$(WORKSPACE)" -- toolchain-doctor
+	@./bin/hdl-toolchain --engine apptainer --sif "$(SIF)" --workspace "$(WORKSPACE)" -- toolchain-doctor
 
 shell: ## Open an interactive shell in Docker
-	@./bin/hdl-toolchain --workspace "$(WORKSPACE)" -- zsh -l
+	@./bin/hdl-toolchain --image $(IMAGE):$(TAG) --pull never --workspace "$(WORKSPACE)" -- zsh -l
 
 export: ## Export the OCI image for Apptainer
-	@./scripts/export-oci.sh
+	@HDL_TOOLCHAIN_IMAGE=$(IMAGE) HDL_TOOLCHAIN_TAG=$(TAG) ./scripts/export-oci.sh
 
 sif: build ## Derive the Apptainer SIF from the OCI image
-	@./scripts/build-sif.sh
+	@HDL_TOOLCHAIN_IMAGE=$(IMAGE) HDL_TOOLCHAIN_TAG=$(TAG) HDL_TOOLCHAIN_SIF="$(SIF)" ./scripts/build-sif.sh
 
 qualify: ## Run the full release qualification in order
 	@printf '==> 1/5 repository checks\n'
@@ -106,7 +115,7 @@ qualify: ## Run the full release qualification in order
 	@printf '    Apptainer doctor      PASS\n'
 	@printf '    architecture          %s\n' "$$(uname -m)"
 	@printf '    image                 %s\n' \
-	    "$$(docker image inspect hdl-course-toolchain:latest --format '{{.Id}}' | cut -c8-19)"
+	    "$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}' | cut -c8-19)"
 	@printf '    build inputs          %s\n' "$$(cat .out/build-inputs.docker.sha256 | cut -c1-12)"
 	@printf '    source commit         %s\n' "$$(git rev-parse HEAD)"
 	@printf '\nQualification passed. This block is the evidence for a release.\n'
