@@ -19,5 +19,14 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
       - name: Run fast checks
         run: make check
+
+      - name: Shellcheck launcher, installer, uninstaller and scripts
+        run: shellcheck -S warning bin/hdl-toolchain install.sh uninstall.sh scripts/*.sh
+
+      - name: Launcher and installer tests
+        run: make test

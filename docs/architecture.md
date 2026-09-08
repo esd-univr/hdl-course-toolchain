@@ -96,6 +96,31 @@ Validation is intentionally split into two layers:
 A green doctor therefore means "the environment works", not "every course has
 been qualified against this revision".
 
+## Distribution
+
+The toolchain reaches its consumers as GitHub artifacts, never as a checkout:
+
+```text
+tag vX.Y.Z ──> .github/workflows/release.yml
+                 ├─ ghcr.io/esd-univr/hdl-course-toolchain:vX.Y.Z   (immutable)
+                 ├─ ghcr.io/esd-univr/hdl-course-toolchain:latest    (moves per release)
+                 └─ GitHub Release vX.Y.Z: hdl-toolchain, install.sh, uninstall.sh, SHA256SUMS
+```
+
+- **Students** run `install.sh` once (`~/.local/bin/hdl-toolchain`, SHA-256
+  verified against the launcher in the same Release) and thereafter just
+  `hdl-toolchain --workspace . -- …`. The launcher defaults to the official
+  `:latest`, refreshes it when online, and falls back to a cached image
+  offline.
+- **Courses** pin `…:vX.Y.Z@sha256:…` for qualification, carried in each
+  course's `toolchain-baseline.yml`.
+- The versioned image tag is never rewritten; `scripts/release.sh` and the
+  workflow both refuse a version that already has an image or a release.
+
+`scripts/release.sh` does the git half (version pinning, commit, annotated
+tag); the workflow does the build, the GHCR push and the Release. The full
+runbook is [`releasing.md`](releasing.md).
+
 ## Runtime model
 
 Docker and Apptainer are normalized through `bin/hdl-toolchain`:

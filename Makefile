@@ -4,13 +4,14 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-.PHONY: help software check updates bump fetch build doctor doctor-sif shell export sif qualify clean
+.PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify release clean
 
 help: ## Show the available commands
 	@printf 'HDL Course Toolchain\n\n'
 	@printf 'Inspect\n'
 	@printf '  make software  Show planned software, versions, sources, and architecture\n'
 	@printf '  make check     Run fast repository consistency checks\n'
+	@printf '  make test      Launcher and installer test suites\n'
 	@printf '  make updates   Compare pinned versions against upstream (live network)\n'
 	@printf '                 TOOL=<name> narrows it, REFRESH=1 re-probes advisories\n'
 	@printf '\nBuild\n'
@@ -26,6 +27,7 @@ help: ## Show the available commands
 	@printf '  make sif       Build the Apptainer SIF from the OCI image\n'
 	@printf '\nMaintenance\n'
 	@printf '  make bump      Bump one pin: make bump TOOL=yosys VERSION=v0.68\n'
+	@printf '  make release   Cut a release: make release VERSION=vX.Y.Z (see docs/releasing.md)\n'
 	@printf '  make clean     Remove generated artifacts under .out/\n'
 
 software: ## Show the planned software inventory
@@ -38,9 +40,23 @@ check: ## Run fast repository checks
 	@printf '==> manifest\n'
 	@$(PYTHON) scripts/versions.py --format check | sed 's/^/    /'
 	@printf '==> shell syntax\n'
-	@for file in bin/hdl-toolchain container/*.sh scripts/*.sh; do bash -n "$$file"; done
+	@for file in bin/hdl-toolchain install.sh uninstall.sh container/*.sh scripts/*.sh; do bash -n "$$file"; done
 	@printf '    OK  shell scripts parse cleanly\n'
+	@printf '==> installer digest\n'
+	@./scripts/sync-installer-digest.sh --check | sed 's/^/    /'
 	@printf '\nRepository checks passed.\n'
+
+test: ## Run the launcher, installer and uninstaller test suites
+	@printf '==> launcher tests\n'
+	@bash scripts/test_hdl_toolchain.sh
+	@printf '\n==> installer tests\n'
+	@bash scripts/test_install.sh
+	@printf '\n==> uninstaller tests\n'
+	@bash scripts/test_uninstall.sh
+
+release: ## Cut a release (git half); CI builds and publishes. make release VERSION=vX.Y.Z
+	@test -n "$(VERSION)" || { printf 'usage: make release VERSION=vX.Y.Z\n' >&2; exit 2; }
+	@./scripts/release.sh "$(VERSION)"
 
 updates: ## Report pinned versions against upstream (network)
 	@$(PYTHON) scripts/configure.py check-updates $(if $(TOOL),--tool $(TOOL)) $(if $(REFRESH),--refresh)
