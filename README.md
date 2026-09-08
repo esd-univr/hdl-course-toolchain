@@ -238,17 +238,22 @@ Build the SIF with:
 make sif
 ```
 
-Run through either engine with the same launcher (maintainers use the in-tree
-copy; students use the installed one on `PATH`):
+After `make build` / `make sif`, `make shell`, `make doctor` and `make doctor-sif`
+run against that local build (`--image hdl-course-toolchain:latest --pull never`,
+or `--sif`), so qualification never needs the published GHCR image.
+
+Students use the installed launcher on `PATH`, which defaults to the official
+GHCR image. The same binary works either way:
 
 ```bash
-./bin/hdl-toolchain --engine docker --workspace "$PWD" -- zsh -l
-./bin/hdl-toolchain --engine apptainer --workspace "$PWD" -- zsh -l
+hdl-toolchain --workspace "$PWD" -- zsh -l                                  # student path: GHCR :latest
+./bin/hdl-toolchain --image hdl-course-toolchain:latest --pull never --workspace "$PWD" -- zsh -l   # local build
+./bin/hdl-toolchain --engine apptainer --sif .out/hdl-course-toolchain.sif --workspace "$PWD" -- zsh -l
 ```
 
-With `--engine apptainer` and no `--sif`, the launcher runs the OCI image
-directly (`apptainer exec docker://ghcr.io/esd-univr/hdl-course-toolchain:…`);
-Apptainer pulls and caches it. `--sif PATH` still runs a locally built SIF.
+With `--engine apptainer` and no `--sif`, the launcher runs the image directly
+(`apptainer exec docker://ghcr.io/esd-univr/hdl-course-toolchain:…`); Apptainer
+pulls and caches it.
 
 The canonical qualified architecture is `linux/amd64`. The launcher passes
 `--platform linux/amd64` by default (env: `HDL_TOOLCHAIN_PLATFORM`, flag:
