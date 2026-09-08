@@ -84,7 +84,14 @@ bash scripts/test_install.sh
 
 # --- commit, tag, push ------------------------------------------------
 git add VERSION bin/hdl-toolchain install.sh uninstall.sh
-git commit -m "release: ${version}"
+if git diff --cached --quiet; then
+    # A retry after a failed release: the tree already pins this version.
+    echo "version already pinned in the tree; tagging HEAD as-is"
+    committed="no"
+else
+    git commit -m "release: ${version}"
+    committed="yes"
+fi
 git tag -a "${version}" -m "hdl-course-toolchain ${version}"
 
 echo
@@ -98,7 +105,11 @@ case "${answer}" in
         echo "  gh run watch \$(gh run list --workflow=release.yml -L1 --json databaseId --jq '.[0].databaseId')"
         ;;
     *)
-        echo "not pushed. The commit and tag exist locally; 'git push origin main --follow-tags' when ready,"
-        echo "or 'git tag -d ${version} && git reset --hard HEAD~1' to undo."
+        echo "not pushed. The tag exists locally; 'git push origin main --follow-tags' when ready."
+        if [ "${committed}" = "yes" ]; then
+            echo "to undo: 'git tag -d ${version} && git reset --hard HEAD~1'"
+        else
+            echo "to undo: 'git tag -d ${version}'"
+        fi
         ;;
 esac
