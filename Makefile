@@ -4,14 +4,16 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-# Local build + qualification run against this image name. `make build` produces
-# it, and `doctor` / `shell` / `doctor-sif` point the launcher straight at it
-# with --pull never, so a maintainer never needs the published GHCR image to
-# qualify a candidate. Release publishing uses the GHCR name and is driven by
-# scripts/release.sh and .github/workflows/release.yml, not by these targets.
-IMAGE ?= hdl-course-toolchain
-TAG   ?= latest
-SIF   ?= $(CURDIR)/.out/hdl-course-toolchain.sif
+# The image `make build` produces and `doctor` / `shell` qualify against. It
+# defaults to the local name `hdl-course-toolchain:latest`, so a maintainer
+# never needs the published GHCR image to qualify a candidate. The release
+# workflow builds under the GHCR name by exporting HDL_TOOLCHAIN_IMAGE /
+# HDL_TOOLCHAIN_TAG, which these variables pick up so `doctor` inspects the
+# same image `build` made. `build` / `export` / `sif` read those env vars
+# directly (scripts/build-image.sh), so they are not re-exported here.
+IMAGE ?= $(or $(HDL_TOOLCHAIN_IMAGE),hdl-course-toolchain)
+TAG   ?= $(or $(HDL_TOOLCHAIN_TAG),latest)
+SIF   ?= $(or $(HDL_TOOLCHAIN_SIF),$(CURDIR)/.out/hdl-course-toolchain.sif)
 
 .PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify release clean
 
@@ -77,7 +79,7 @@ fetch: ## Download and verify source archives
 	@./scripts/fetch-sources.sh
 
 build: fetch ## Build the OCI image
-	@HDL_TOOLCHAIN_IMAGE=$(IMAGE) HDL_TOOLCHAIN_TAG=$(TAG) ./scripts/build-image.sh
+	@./scripts/build-image.sh
 
 doctor: ## Run the toolchain doctor in Docker
 	@./scripts/artifact-status.sh docker
@@ -91,10 +93,10 @@ shell: ## Open an interactive shell in Docker
 	@./bin/hdl-toolchain --image $(IMAGE):$(TAG) --pull never --workspace "$(WORKSPACE)" -- zsh -l
 
 export: ## Export the OCI image for Apptainer
-	@HDL_TOOLCHAIN_IMAGE=$(IMAGE) HDL_TOOLCHAIN_TAG=$(TAG) ./scripts/export-oci.sh
+	@./scripts/export-oci.sh
 
 sif: build ## Derive the Apptainer SIF from the OCI image
-	@HDL_TOOLCHAIN_IMAGE=$(IMAGE) HDL_TOOLCHAIN_TAG=$(TAG) HDL_TOOLCHAIN_SIF="$(SIF)" ./scripts/build-sif.sh
+	@./scripts/build-sif.sh
 
 qualify: ## Run the full release qualification in order
 	@printf '==> 1/5 repository checks\n'
