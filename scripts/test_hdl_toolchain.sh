@@ -147,7 +147,7 @@ teardown
 
 # --- isolation defaults ------------------------------------------------
 setup; touch "${STUB_HOME}/has_image"
-log="$(launch --workspace ws -- zsh; run_log)"
+launch --workspace ws -- zsh >/dev/null
 has "isolation/read-only root"      "$(run_log)" "--read-only"
 has "isolation/network denied"      "$(run_log)" "--network none"
 has "isolation/workspace at /work"  "$(run_log)" "target=/work"

@@ -6,7 +6,6 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 UNINSTALL="${ROOT}/uninstall.sh"
-REPO="ghcr.io/esd-univr/hdl-course-toolchain"
 PASS=0
 FAIL=0
 
