@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 # Run a command inside the course toolchain image against a mounted workspace.
 #
-# Docker and Apptainer are intentionally normalized here: both get an isolated
+# Students install this one file (see the project's install.sh) and never clone
+# this repository. The default image is the official GitHub Container Registry
+# publication; the launcher obtains and refreshes it on its own.
+#
+# Docker and Apptainer are intentionally normalised here: both get an isolated
 # root environment, no network by default, and one writable workspace at /work.
+#
+# Kept free of bash 4 features (mapfile, associative arrays, ${x,,}) and every
+# possibly-empty array is expanded with the ${a[@]+"${a[@]}"} guard, so it runs
+# under the stock macOS /bin/bash 3.2 with `set -u` as well as modern bash.
 set -euo pipefail
+
+DEFAULT_IMAGE="ghcr.io/esd-univr/hdl-course-toolchain"
+LAUNCHER_VERSION="1.3.0"
 
 # A misspelled HDL_TOOLCHAIN_* variable used to be ignored in silence, so a
 # request for one engine could run in the other and still report success.
 # Anything unrecognised is refused instead.
-known_env="HDL_TOOLCHAIN_IMAGE HDL_TOOLCHAIN_TAG HDL_TOOLCHAIN_ENGINE HDL_TOOLCHAIN_SIF HDL_TOOLCHAIN_QUIET"
+known_env="HDL_TOOLCHAIN_IMAGE HDL_TOOLCHAIN_TAG HDL_TOOLCHAIN_ENGINE HDL_TOOLCHAIN_SIF HDL_TOOLCHAIN_QUIET HDL_TOOLCHAIN_PLATFORM HDL_TOOLCHAIN_PULL HDL_TOOLCHAIN_DOCKER"
 for name in $(env | sed -n 's/^\(HDL_TOOLCHAIN_[A-Z0-9_]*\)=.*/\1/p'); do
     case " ${known_env} " in
         *" ${name} "*) ;;
@@ -20,66 +31,186 @@ for name in $(env | sed -n 's/^\(HDL_TOOLCHAIN_[A-Z0-9_]*\)=.*/\1/p'); do
     esac
 done
 
-IMAGE="${HDL_TOOLCHAIN_IMAGE:-hdl-course-toolchain}"
+# HDL_TOOLCHAIN_IMAGE may be a bare repository (tag applied from
+# HDL_TOOLCHAIN_TAG / --tag) or a fully qualified reference with its own
+# :tag or @sha256: digest.
+IMAGE="${HDL_TOOLCHAIN_IMAGE:-${DEFAULT_IMAGE}}"
 TAG="${HDL_TOOLCHAIN_TAG:-latest}"
 ENGINE="${HDL_TOOLCHAIN_ENGINE:-docker}"
-SIF="${HDL_TOOLCHAIN_SIF:-.out/hdl-course-toolchain.sif}"
+SIF="${HDL_TOOLCHAIN_SIF:-}"
+# linux/amd64 is the canonical qualified architecture. "native" means "let the
+# engine pick", for a maintainer building and testing an arm64 image.
+PLATFORM="${HDL_TOOLCHAIN_PLATFORM:-linux/amd64}"
+# auto: refresh a tag when the registry is reachable, tolerate being offline if
+# a usable copy is already cached; only fetch a digest ref when it is missing.
+# always / never force the obvious thing.
+PULL="${HDL_TOOLCHAIN_PULL:-auto}"
+DOCKER="${HDL_TOOLCHAIN_DOCKER:-docker}"
 WORKSPACE=""
 ALLOW_NETWORK="no"
 
 usage() {
-    cat >&2 <<'EOF_USAGE'
+    cat >&2 <<EOF_USAGE
 usage: hdl-toolchain [options] -- COMMAND [ARGS...]
 
-  --workspace DIR   host directory to mount at /work (required)
-  --engine ENGINE   docker (default) or apptainer
-  --sif PATH        SIF to use with --engine apptainer
-  --network         allow network access (denied by default, both engines)
+  --workspace DIR    host directory to mount at /work (required; "." is common)
+  --image REF        image to run; default ${DEFAULT_IMAGE}:latest
+                     REF may carry its own :tag or @sha256: digest
+  --tag TAG          tag to use when --image / \$HDL_TOOLCHAIN_IMAGE is a bare repo
+  --platform PLAT    container platform (default ${PLATFORM}); "native" to skip
+  --pull POLICY      auto (default), always, or never
+  --engine ENGINE    docker (default) or apptainer
+  --sif PATH         run this SIF with --engine apptainer instead of docker://
+  --network          allow network access (denied by default, both engines)
+  --version          print the launcher version and exit
+  -h, --help         this text
 
-Environment: HDL_TOOLCHAIN_IMAGE, HDL_TOOLCHAIN_TAG, HDL_TOOLCHAIN_ENGINE, HDL_TOOLCHAIN_SIF.
+Environment overrides: HDL_TOOLCHAIN_IMAGE, HDL_TOOLCHAIN_TAG,
+HDL_TOOLCHAIN_PLATFORM, HDL_TOOLCHAIN_PULL, HDL_TOOLCHAIN_ENGINE,
+HDL_TOOLCHAIN_SIF, HDL_TOOLCHAIN_DOCKER, HDL_TOOLCHAIN_QUIET.
+
+examples:
+  hdl-toolchain --workspace . -- zsh -l
+  hdl-toolchain --workspace lesson1-rtl -- make check
+  hdl-toolchain --image ${DEFAULT_IMAGE}:v1.3.0 --workspace . -- make
 EOF_USAGE
     exit 2
 }
 
+image_override=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --workspace) WORKSPACE="${2:?--workspace needs a directory}"; shift 2 ;;
+        --workspace) WORKSPACE="${2:?--workspace needs a directory}";  shift 2 ;;
+        --image)     image_override="${2:?--image needs a reference}"; shift 2 ;;
+        --tag)       TAG="${2:?--tag needs a value}";                  shift 2 ;;
+        --platform)  PLATFORM="${2:?--platform needs a value}";        shift 2 ;;
+        --pull)      PULL="${2:?--pull needs a policy}";               shift 2 ;;
         --engine)    ENGINE="${2:?--engine needs a name}";             shift 2 ;;
         --sif)       SIF="${2:?--sif needs a path}";                   shift 2 ;;
         --network)   ALLOW_NETWORK="yes";                              shift ;;
+        --version)   echo "hdl-toolchain ${LAUNCHER_VERSION}";         exit 0 ;;
         --)          shift; break ;;
         -h|--help)   usage ;;
         *)           echo "error: unknown option: $1" >&2; usage ;;
     esac
 done
 
+[ -n "${image_override}" ] && IMAGE="${image_override}"
+
+case "${PULL}" in
+    auto|always|never) ;;
+    *) echo "error: --pull must be auto, always, or never (got: ${PULL})" >&2; exit 2 ;;
+esac
+
+# Resolve the final reference. A ref that already names a :tag or an @sha256:
+# digest is used verbatim; a bare repository gets ${TAG} appended. The tag, if
+# any, lives in the last path segment (a "registry:port/path" colon does not
+# count), and the digest is whatever follows "@".
+case "${IMAGE}" in
+    *@sha256:*) REF="${IMAGE}"; REF_IS_DIGEST="yes" ;;
+    *)
+        REF_IS_DIGEST="no"
+        last_segment="${IMAGE##*/}"
+        case "${last_segment}" in
+            *:*) REF="${IMAGE}" ;;
+            *)   REF="${IMAGE}:${TAG}" ;;
+        esac
+        ;;
+esac
+
 [ -n "${WORKSPACE}" ] || { echo "error: --workspace is required" >&2; usage; }
-[ $# -gt 0 ]          || { echo "error: no command given" >&2; usage; }
+[ $# -gt 0 ]          || { echo "error: no command given (did you forget '--'?)" >&2; usage; }
 [ -d "${WORKSPACE}" ] || { echo "error: no such directory: ${WORKSPACE}" >&2; exit 2; }
 WORKSPACE="$(cd "${WORKSPACE}" && pwd)"
 
-# Say exactly what is about to run. A doctor PASS is only meaningful together
-# with the identity of the artifact it inspected: a tag can still point at an
-# older image, and a SIF can predate the sources it was supposed to be built
-# from. Both failures are silent without this line.
-identify() {
-    [ -z "${HDL_TOOLCHAIN_QUIET:-}" ] || return 0
-    case "${ENGINE}" in
-        docker)
-            digest=$(docker image inspect "${IMAGE}:${TAG}" \
-                        --format '{{.Id}}' 2>/dev/null || echo "<not built>")
-            created=$(docker image inspect "${IMAGE}:${TAG}" \
-                        --format '{{.Created}}' 2>/dev/null | cut -c1-19)
-            printf '[hdl-toolchain] docker %s:%s %s built %s\n' \
-                "${IMAGE}" "${TAG}" "${digest#sha256:}" "${created:-?}" >&2
-            ;;
-        apptainer)
-            built=$(date -r "${SIF}" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || echo "?")
-            printf '[hdl-toolchain] apptainer %s built %s\n' "${SIF}" "${built}" >&2
+# Apple Silicon and other non-amd64 hosts must be explicit about emulation
+# rather than silently running the wrong architecture or failing deep inside a
+# tool. Passing --platform linux/amd64 everywhere is the reproducible default;
+# "native" opts out.
+platform_args=()
+if [ "${PLATFORM}" != "native" ] && [ -n "${PLATFORM}" ]; then
+    platform_args=(--platform "${PLATFORM}")
+    export DOCKER_DEFAULT_PLATFORM="${PLATFORM}"
+fi
+
+note() { [ -n "${HDL_TOOLCHAIN_QUIET:-}" ] || printf '[hdl-toolchain] %s\n' "$*" >&2; }
+
+# "docker image inspect --platform" is too new to rely on for students; a
+# locally cached image counts as present whatever its recorded platform.
+have_local_docker_image() {
+    "${DOCKER}" image inspect "$1" >/dev/null 2>&1
+}
+
+# Obtain / refresh the Docker image according to --pull. Never fails the run
+# just because the registry is unreachable if a usable image is already here.
+ensure_docker_image() {
+    command -v "${DOCKER}" >/dev/null 2>&1 || {
+        echo "error: '${DOCKER}' not found on PATH." >&2
+        echo "       Install Docker (or Docker Desktop) and start it, then retry." >&2
+        echo "       This launcher does not install Docker for you." >&2
+        exit 3
+    }
+    "${DOCKER}" info >/dev/null 2>&1 || {
+        echo "error: '${DOCKER}' is installed but not responding." >&2
+        echo "       Start the Docker daemon / Docker Desktop and retry." >&2
+        exit 3
+    }
+
+    local have="no"
+    have_local_docker_image "${REF}" && have="yes"
+
+    local want_pull="no"
+    case "${PULL}" in
+        always) want_pull="yes" ;;
+        never)  want_pull="no" ;;
+        auto)
+            if [ "${have}" = "no" ]; then
+                want_pull="yes"
+            elif [ "${REF_IS_DIGEST}" = "no" ]; then
+                want_pull="yes"   # refresh the moving tag
+            fi
             ;;
     esac
+
+    if [ "${want_pull}" = "yes" ]; then
+        note "pulling ${REF}"
+        if "${DOCKER}" pull ${platform_args[@]+"${platform_args[@]}"} "${REF}" >&2; then
+            have="yes"
+        elif [ "${have}" = "yes" ]; then
+            note "registry unreachable; using the cached image"
+        else
+            echo "error: cannot obtain ${REF} and no cached copy is present." >&2
+            echo "       Check your network / registry login and retry." >&2
+            exit 3
+        fi
+    fi
+
+    if [ "${have}" = "no" ]; then
+        echo "error: image ${REF} is not available locally and --pull never was set." >&2
+        exit 3
+    fi
 }
-identify
+
+# Say exactly what is about to run. A doctor PASS is only meaningful together
+# with the identity of the artifact it inspected: a tag can still point at an
+# older image. The repo digest is the immutable identity behind the tag.
+identify_docker() {
+    [ -z "${HDL_TOOLCHAIN_QUIET:-}" ] || return 0
+    local id created digest repo
+    id=$("${DOCKER}" image inspect "${REF}" --format '{{.Id}}' 2>/dev/null || echo '<unknown>')
+    created=$("${DOCKER}" image inspect "${REF}" --format '{{.Created}}' 2>/dev/null | cut -c1-19)
+    # An image can carry several repo digests; prefer the one for the repo we
+    # were actually asked to run.
+    repo="${REF%@*}"; repo="${repo%:*}"
+    local all_digests
+    all_digests=$("${DOCKER}" image inspect "${REF}" --format '{{join .RepoDigests "\n"}}' 2>/dev/null || true)
+    digest=$(printf '%s\n' "${all_digests}" | grep -F "${repo}@" 2>/dev/null | head -n1 || true)
+    [ -n "${digest}" ] || digest=$(printf '%s\n' "${all_digests}" | head -n1)
+    [ -n "${digest}" ] || digest="${REF} (no registry digest; local build?)"
+    printf '[hdl-toolchain] docker  %s\n' "${digest}" >&2
+    printf '[hdl-toolchain]         id %s  created %s  platform %s\n' \
+        "${id#sha256:}" "${created:-?}" "${PLATFORM:-native}" >&2
+}
 
 SCRATCH="${WORKSPACE}/.toolchain"
 mkdir -p \
@@ -99,12 +230,16 @@ runtime_env=(
 
 case "${ENGINE}" in
 docker)
+    ensure_docker_image
+    identify_docker
+
     network=(--network none)
     [ "${ALLOW_NETWORK}" = "no" ] || network=()
     tty=()
     [ -t 0 ] && [ -t 1 ] && tty=(-t)
-    exec docker run --rm -i "${tty[@]}" \
-        "${network[@]}" \
+    exec "${DOCKER}" run --rm -i ${tty[@]+"${tty[@]}"} \
+        ${platform_args[@]+"${platform_args[@]}"} \
+        ${network[@]+"${network[@]}"} \
         --read-only \
         --hostname toolchain \
         --tmpfs /tmp:rw,nosuid,nodev,exec \
@@ -114,22 +249,31 @@ docker)
         --workdir /work \
         --env HOME=/work \
         "${runtime_env[@]}" \
-        "${IMAGE}:${TAG}" "$@"
+        "${REF}" "$@"
     ;;
 apptainer)
-    if [ ! -f "${SIF}" ]; then
-        echo "error: no SIF at ${SIF}; run 'make sif' first" >&2
-        exit 2
+    command -v apptainer >/dev/null 2>&1 || {
+        echo "error: apptainer not found on PATH." >&2
+        exit 3
+    }
+    if [ -n "${SIF}" ]; then
+        [ -f "${SIF}" ] || { echo "error: no SIF at ${SIF}" >&2; exit 2; }
+        target="${SIF}"
+        note "apptainer ${SIF}"
+    else
+        # Apptainer pulls and caches the OCI image itself; no local SIF needed.
+        target="docker://${REF#docker://}"
+        note "apptainer ${target}"
     fi
     network=(--net --network none)
     [ "${ALLOW_NETWORK}" = "no" ] || network=()
     exec apptainer exec \
         --containall \
-        "${network[@]}" \
+        ${network[@]+"${network[@]}"} \
         --home "${WORKSPACE}:/work" \
         --pwd /work \
         "${runtime_env[@]}" \
-        "${SIF}" "$@"
+        "${target}" "$@"
     ;;
 *)
     echo "error: unknown engine: ${ENGINE} (expected docker or apptainer)" >&2

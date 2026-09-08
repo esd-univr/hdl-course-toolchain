@@ -45,12 +45,67 @@ access by default.
 
 ## Consuming the toolchain
 
-Course repositories should consume a qualified release of this toolchain rather
-than track `main`. A course qualification is therefore associated with a
-specific toolchain release and, when distributed as an OCI image, preferably an
-immutable image digest.
+Students do **not** clone this repository. Each release publishes:
+
+- an OCI image at `ghcr.io/esd-univr/hdl-course-toolchain` — immutable
+  `:vX.Y.Z` tags plus a `:latest` that moves only when a new qualified release
+  is published;
+- the `hdl-toolchain` launcher, an `install.sh`, an `uninstall.sh` and a
+  `SHA256SUMS`, as GitHub Release assets.
+
+### Students
+
+One-time setup:
+
+```bash
+curl -fsSL https://github.com/esd-univr/hdl-course-toolchain/releases/latest/download/install.sh | bash
+```
+
+The safer, inspect-first form:
+
+```bash
+curl -fsSL https://github.com/esd-univr/hdl-course-toolchain/releases/latest/download/install.sh -o install.sh
+less install.sh && sh install.sh
+```
+
+This installs one file, `~/.local/bin/hdl-toolchain`, and adds that directory
+to `PATH` if it is missing. It downloads the launcher from the Release (not from
+`main`) and verifies it with SHA-256. Docker (or Docker Desktop) must already be
+installed and running; the installer does not install Docker. Then, from any
+lesson directory:
+
+```bash
+hdl-toolchain --workspace . -- zsh -l
+```
+
+The launcher obtains and refreshes `:latest` on its own, tolerates being
+offline when a usable image is already cached, and prints the exact image
+digest it runs.
+
+To remove it, run `hdl-toolchain`'s uninstaller (it only deletes the launcher):
+
+```bash
+curl -fsSL https://github.com/esd-univr/hdl-course-toolchain/releases/latest/download/uninstall.sh | sh
+```
+
+`uninstall.sh --dry-run` shows what it would do; `uninstall.sh --purge-image`
+also removes local `ghcr.io/esd-univr/hdl-course-toolchain` images (and nothing
+else — it never touches Docker itself, other images, containers, or your
+workspaces).
+
+### Courses
+
+A course qualification is tied to a specific release, pinned by digest:
+
+```bash
+hdl-toolchain --image ghcr.io/esd-univr/hdl-course-toolchain:vX.Y.Z@sha256:… --workspace . -- make
+```
+
+Course repositories keep that reference in their `toolchain-baseline.yml` and
+their lesson Makefiles read it from there.
 
 `main` is the development line for the next shared-infrastructure revision.
+See [`docs/releasing.md`](docs/releasing.md) for how a release is cut.
 
 ## Waveform inspection
 
@@ -183,16 +238,37 @@ Build the SIF with:
 make sif
 ```
 
-Run through either engine with the same launcher:
+Run through either engine with the same launcher (maintainers use the in-tree
+copy; students use the installed one on `PATH`):
 
 ```bash
 ./bin/hdl-toolchain --engine docker --workspace "$PWD" -- zsh -l
 ./bin/hdl-toolchain --engine apptainer --workspace "$PWD" -- zsh -l
 ```
 
-Environment overrides use the `HDL_TOOLCHAIN_*` prefix, including
-`HDL_TOOLCHAIN_IMAGE`, `HDL_TOOLCHAIN_TAG`, `HDL_TOOLCHAIN_PLATFORM`,
-`HDL_TOOLCHAIN_ENGINE`, and `HDL_TOOLCHAIN_SIF`.
+With `--engine apptainer` and no `--sif`, the launcher runs the OCI image
+directly (`apptainer exec docker://ghcr.io/esd-univr/hdl-course-toolchain:…`);
+Apptainer pulls and caches it. `--sif PATH` still runs a locally built SIF.
+
+The canonical qualified architecture is `linux/amd64`. The launcher passes
+`--platform linux/amd64` by default (env: `HDL_TOOLCHAIN_PLATFORM`, flag:
+`--platform`); on Apple Silicon this means Docker Desktop emulation, which is
+the intended behaviour. `--platform native` opts out, for a maintainer building
+and testing an arm64 image.
+
+Recognised environment overrides (a misspelled `HDL_TOOLCHAIN_*` name is
+rejected, not ignored):
+
+| Variable | Flag | Meaning |
+|---|---|---|
+| `HDL_TOOLCHAIN_IMAGE` | `--image` | image reference; may carry its own `:tag` or `@sha256:` digest |
+| `HDL_TOOLCHAIN_TAG` | `--tag` | tag to append when the reference is a bare repository |
+| `HDL_TOOLCHAIN_PLATFORM` | `--platform` | container platform, default `linux/amd64`; `native` to skip |
+| `HDL_TOOLCHAIN_PULL` | `--pull` | `auto` (default), `always`, or `never` |
+| `HDL_TOOLCHAIN_ENGINE` | `--engine` | `docker` (default) or `apptainer` |
+| `HDL_TOOLCHAIN_SIF` | `--sif` | run this SIF instead of `docker://` under Apptainer |
+| `HDL_TOOLCHAIN_DOCKER` | — | Docker CLI to invoke (default `docker`) |
+| `HDL_TOOLCHAIN_QUIET` | — | suppress the `[hdl-toolchain]` identity lines |
 
 ## Validation model
 
@@ -214,15 +290,18 @@ complete toolchain has been qualified on that architecture.
 .
 ├── Containerfile             # canonical OCI build
 ├── versions.yml              # single source of truth for tool/build pins
+├── VERSION                   # toolchain release version (pinned by scripts/release.sh)
 ├── Makefile                  # human-facing command interface
+├── install.sh                # student installer, published as a Release asset
+├── uninstall.sh              # conservative uninstaller, published as a Release asset
 ├── requirements.in           # direct Python dependencies
 ├── requirements.txt          # resolved Python lock
 ├── apptainer/                # OCI-to-SIF definition
-├── bin/                      # user-facing launcher
+├── bin/                      # the hdl-toolchain launcher (also a Release asset)
 ├── container/                # runtime shell and entrypoint
 ├── doctor/                   # functional health checks
-├── docs/                     # architecture and maintenance notes
-└── scripts/                  # manifest, updates, fetch, build, export, validation
+├── docs/                     # architecture, releasing, and maintenance notes
+└── scripts/                  # manifest, updates, fetch, build, release, tests
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the repository boundary,
