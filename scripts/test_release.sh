@@ -128,6 +128,15 @@ printf '1.3.1\n' > VERSION
 git commit -qam "release: v1.3.1"
 out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; eq "resume exits 0" "$?" "0"
 has "resume message" "$out" "already prepared at HEAD"
+# ... but resume must NOT fire when the version is already claimed elsewhere
+git tag v1.3.1
+out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; rc=$?
+neq0 "resume blocked when tag exists" "$rc"
+case "$out" in
+  *"already prepared"*) bad "resume must not claim already-prepared when tag exists" "$out" ;;
+  *) ok ;;
+esac
+git tag -d v1.3.1 >/dev/null
 git reset -q --hard origin/main
 teardown_repo
 

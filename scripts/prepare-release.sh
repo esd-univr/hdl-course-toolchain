@@ -18,8 +18,32 @@ case "${VERSION}" in
 esac
 BARE="${VERSION#v}"
 
+# True (0) when the target version is already claimed somewhere — a local tag, an
+# origin tag, a GitHub Release, or a GHCR image. Prints the specific conflict to
+# stderr. Non-fatal: safe to call in `if`/`&&`/`||` context under `set -e`.
+version_in_use() {
+    if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null 2>&1; then
+        echo "release: tag ${VERSION} already exists locally" >&2
+        return 0
+    fi
+    if origin_tag_object_sha "${VERSION}" >/dev/null 2>&1; then
+        echo "release: tag ${VERSION} already exists on origin" >&2
+        return 0
+    fi
+    if gh_release_exists "${VERSION}"; then
+        echo "release: a GitHub Release ${VERSION} already exists" >&2
+        return 0
+    fi
+    if ghcr_manifest_digest "${VERSION}" >/dev/null 2>&1; then
+        echo "release: $(ghcr_ref "${VERSION}") already exists in GHCR — pick the next version" >&2
+        return 0
+    fi
+    return 1
+}
+
 prepare_already_done() {
-    # HEAD is a matching release commit whose parent is origin/main, tree clean.
+    # HEAD is a matching release commit whose parent is origin/main, tree clean,
+    # and the version is not otherwise claimed (tag/Release/GHCR).
     [ -z "$(git status --porcelain)" ] || return 1
     [ "$(git log -1 --format=%s)" = "release: ${VERSION}" ] || return 1
     [ "$(git rev-parse HEAD^)" = "$(git rev-parse origin/main)" ] || return 1
@@ -27,18 +51,7 @@ prepare_already_done() {
     grep -qx "VERSION=\"${VERSION}\"" uninstall.sh || return 1
     grep -qx "LAUNCHER_VERSION=\"${BARE}\"" bin/hdl-toolchain || return 1
     [ "$(cat VERSION)" = "${BARE}" ] || return 1
-}
-
-version_unused() {
-    git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null 2>&1 \
-        && die "tag ${VERSION} already exists locally"
-    origin_tag_object_sha "${VERSION}" >/dev/null 2>&1 \
-        && die "tag ${VERSION} already exists on origin"
-    gh_release_exists "${VERSION}" \
-        && die "a GitHub Release ${VERSION} already exists"
-    if ghcr_manifest_digest "${VERSION}" >/dev/null 2>&1; then
-        die "$(ghcr_ref "${VERSION}") already exists in GHCR — pick the next version"
-    fi
+    ! version_in_use
 }
 
 prepare_preconditions() {
@@ -46,12 +59,15 @@ prepare_preconditions() {
     branch="$(git rev-parse --abbrev-ref HEAD)"
     [ "${branch}" = "main" ] || die "not on main (on ${branch})"
     [ -z "$(git status --porcelain)" ] || die "working tree is dirty"
-    git fetch --quiet origin
+    git fetch --quiet origin \
+        || die "git fetch origin failed — check network / SSH access to origin"
     [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
         || die "HEAD is not exactly origin/main — pull/push/align main first"
     grep -qx 'VERSION="v0.0.0-dev"' install.sh \
         || die "install.sh is not at the v0.0.0-dev sentinel — a release is already half-pinned"
-    version_unused
+    if version_in_use; then
+        die "version ${VERSION} is already in use (see above)"
+    fi
 }
 
 main() {
