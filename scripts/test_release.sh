@@ -180,5 +180,99 @@ eq "re-run adds no commit" "$(git rev-parse HEAD^)" "$BASE_SHA"
 teardown_repo
 
 echo
+echo "== publish-release.sh validation gate =="
+setup_pub() {   # scratch repo with a committed release + a fake qualified image
+  setup_repo
+  # publish-release.sh + qualification.py are not part of setup_repo's copy set
+  cp "$ROOT/scripts/publish-release.sh" "$ROOT/scripts/qualification.py" scripts/
+  printf '.out/\n' > .gitignore
+  printf 'check:\n\t@true\ntest:\n\t@true\n' > Makefile
+  git add -A; git commit -qm makefile; git push -q origin main
+  # pin + commit like prepare would
+  printf '1.3.1\n' > VERSION
+  printf 'LAUNCHER_VERSION="1.3.1"\n' > bin/hdl-toolchain
+  printf 'VERSION="v1.3.1"\nSHA256="x"\n' > install.sh
+  printf 'VERSION="v1.3.1"\n' > uninstall.sh
+  mkdir -p .out doctor container
+  printf 'a\n' > versions.yml; printf 'b\n' > Containerfile; printf 'c\n' > requirements.txt
+  git add -A; git commit -qm "release: v1.3.1"
+  HEAD_SHA="$(git rev-parse HEAD)"
+  . scripts/release_lib.sh
+  IMG_ID="sha256:$(printf '%s' fixed | sha256sum | cut -c1-64)"
+  # docker stub answers `image inspect --format {{.Id}} <ref>` and `info`
+  cat > "$WORK/stub/docker" <<S
+#!/usr/bin/env bash
+case "\$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"image inspect"*) exit 1 ;;
+  *"imagetools inspect"*) exit 1 ;;
+  "info") exit 0 ;;
+  *) exit 0 ;;
+esac
+S
+  chmod +x "$WORK/stub/docker"
+  python3 scripts/qualification.py record --out .out/qualification.json \
+    --version v1.3.1 --source-commit "$HEAD_SHA" --tree-clean 1 \
+    --build-inputs-sha256 "$(build_inputs_fingerprint)" \
+    --release-inputs-sha256 "$(release_inputs_fingerprint)" \
+    --docker-image-ref hdl-course-toolchain:latest --docker-image-id "$IMG_ID" \
+    --sif-path .out/x.sif --sif-sha256 deadbeef --platform linux/amd64 --arch x86_64 \
+    --doctor-docker pass --doctor-apptainer pass
+}
+
+# 8a: clean state validates OK (stops before any push once Task 8 is all there is)
+setup_pub
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "8a clean state exits 0" "$?" "0"
+has "8a qualification record matches" "$out" "qualification: record matches"
+has "8a validation OK line" "$out" "validation OK"
+teardown_repo
+
+# 8b: arg != record
+setup_pub
+out="$(bash scripts/publish-release.sh v9.9.9 2>&1)"; neq0 "8b version arg mismatch rejected" "$?"
+has "8b names the version mismatch" "$out" "version mismatch"
+teardown_repo
+
+# 8c: HEAD moved
+setup_pub
+git commit -q --allow-empty -m drift
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8c HEAD moved rejected" "$?"
+has "8c HEAD moved message" "$out" "source_commit mismatch"
+teardown_repo
+
+# 8d: build inputs changed
+setup_pub
+printf 'CHANGED\n' >> versions.yml
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8d build inputs changed rejected" "$?"
+teardown_repo
+
+# 8e: release inputs changed
+setup_pub
+printf 'x\n' >> uninstall.sh
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8e release inputs changed rejected" "$?"
+teardown_repo
+
+# 8f: wrong local image id
+setup_pub
+cat > "$WORK/stub/docker" <<'S'
+#!/usr/bin/env bash
+case "$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "sha256:0000"; exit 0 ;;
+  "info") exit 0 ;; *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/docker"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8f wrong image id rejected" "$?"
+has "8f image id message" "$out" "docker_image_id mismatch"
+teardown_repo
+
+# 8g: no record
+setup_pub
+rm -f .out/qualification.json
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8g missing record rejected" "$?"
+has "8g missing record message" "$out" "make qualify"
+teardown_repo
+
+echo
 echo "release_lib: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
