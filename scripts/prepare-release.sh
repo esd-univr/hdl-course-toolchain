@@ -70,14 +70,42 @@ prepare_preconditions() {
     fi
 }
 
+pin_version() {
+    printf '%s\n' "${BARE}" > VERSION
+    sed -i.bak "s/^LAUNCHER_VERSION=\".*\"\$/LAUNCHER_VERSION=\"${BARE}\"/" bin/hdl-toolchain
+    sed -i.bak "s/^VERSION=\".*\"\$/VERSION=\"${VERSION}\"/" install.sh
+    sed -i.bak "s/^VERSION=\".*\"\$/VERSION=\"${VERSION}\"/" uninstall.sh
+    rm -f bin/hdl-toolchain.bak install.sh.bak uninstall.sh.bak
+    ./scripts/sync-installer-digest.sh
+    grep -qx "LAUNCHER_VERSION=\"${BARE}\"" bin/hdl-toolchain || die "failed to pin the launcher"
+    grep -qx "VERSION=\"${VERSION}\"" install.sh || die "failed to pin install.sh"
+    grep -qx "VERSION=\"${VERSION}\"" uninstall.sh || die "failed to pin uninstall.sh"
+    [ "$(cat VERSION)" = "${BARE}" ] || die "failed to pin VERSION"
+}
+
 main() {
     if prepare_already_done; then
         echo "prepare: already prepared at HEAD $(git rev-parse --short HEAD) (${VERSION})"
         exit 0
     fi
     prepare_preconditions
-    echo "prepare: preconditions OK for ${VERSION}"
-    # Task 7 adds the pinning + commit below this line.
+    echo "prepare: preconditions OK for ${VERSION} — pinning"
+    pin_version
+    echo "prepare: running fast tests against the pinned tree"
+    make --no-print-directory check
+    make --no-print-directory test
+    git add VERSION bin/hdl-toolchain install.sh uninstall.sh
+    git commit -m "release: ${VERSION}"
+    cat <<EOF
+
+prepare: committed "release: ${VERSION}" at $(git rev-parse --short HEAD)
+
+Next:
+  make qualify
+  make publish VERSION=${VERSION}
+
+Not yet done (publish does these): git tag, push, GHCR, GitHub Release.
+EOF
 }
 
 main "$@"

@@ -67,6 +67,15 @@ setup_repo() {
   printf 'LAUNCHER_VERSION="1.2.0"\n' > bin/hdl-toolchain
   printf 'VERSION="v0.0.0-dev"\nSHA256="x"\n' > install.sh
   printf 'VERSION="v0.0.0-dev"\n' > uninstall.sh
+  # stub the digest sync + make the suites prepare-release runs no-ops, so a run
+  # that clears preconditions can proceed to pin + commit without a real toolchain
+  cat > scripts/sync-installer-digest.sh <<'S'
+#!/usr/bin/env bash
+[ "${1:-}" = "--check" ] && exit 0
+sed -i 's/^SHA256=.*/SHA256="deadbeef"/' install.sh
+S
+  chmod +x scripts/sync-installer-digest.sh
+  printf 'check:\n\t@true\ntest:\n\t@true\n' > Makefile
   git add -A; git commit -qm init; git push -q origin main
   mkdir "$WORK/stub"
   cat > "$WORK/stub/gh" <<'S'
@@ -106,8 +115,10 @@ out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; neq0 "ahead of origin reje
 has "ahead message" "$out" "origin/main"
 git reset -q --hard origin/main
 # clean main at origin/main, dev sentinel, version unused -> preconditions pass
+# (the run then proceeds through pin + commit; reset back to a clean main after)
 out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; eq "preconditions pass on clean main" "$?" "0"
 has "preconditions-ok message" "$out" "preconditions OK"
+git reset -q --hard origin/main
 # a local tag for the target version aborts version_unused
 git tag v1.3.1
 out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; neq0 "existing local tag rejected" "$?"
@@ -138,6 +149,34 @@ case "$out" in
 esac
 git tag -d v1.3.1 >/dev/null
 git reset -q --hard origin/main
+teardown_repo
+
+echo
+echo "== prepare-release.sh pins and commits =="
+setup_repo   # ships a sync-installer-digest.sh stub + no-op check/test Makefile
+BASE_SHA="$(git rev-parse origin/main)"
+out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; eq "prepare exits 0" "$?" "0"
+eq "VERSION pinned bare" "$(cat VERSION)" "1.3.1"
+has "launcher pinned" "$(cat bin/hdl-toolchain)" 'LAUNCHER_VERSION="1.3.1"'
+has "installer pinned" "$(cat install.sh)" 'VERSION="v1.3.1"'
+has "uninstaller pinned" "$(cat uninstall.sh)" 'VERSION="v1.3.1"'
+has "installer digest synced" "$(cat install.sh)" 'SHA256="deadbeef"'
+eq "commit subject" "$(git log -1 --format=%s)" "release: v1.3.1"
+eq "parent is origin/main" "$(git rev-parse HEAD^)" "$BASE_SHA"
+eq "nothing pushed" "$(git rev-parse origin/main)" "$BASE_SHA"
+eq "no tag created" "$(git tag | wc -l | tr -d ' ')" "0"
+eq "release commit stages exactly four files" \
+   "$(git show --name-only --format= HEAD | grep -c .)" "4"
+has "stages VERSION"       "$(git show --name-only --format= HEAD)" "VERSION"
+has "stages launcher"      "$(git show --name-only --format= HEAD)" "bin/hdl-toolchain"
+has "stages install.sh"    "$(git show --name-only --format= HEAD)" "install.sh"
+has "stages uninstall.sh"  "$(git show --name-only --format= HEAD)" "uninstall.sh"
+has "next-steps block: qualify" "$out" "make qualify"
+has "next-steps block: publish" "$out" "make publish VERSION=v1.3.1"
+# idempotent re-run: HEAD is the matching release commit
+out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; eq "re-run exits 0" "$?" "0"
+has "re-run says already prepared" "$out" "already prepared"
+eq "re-run adds no commit" "$(git rev-parse HEAD^)" "$BASE_SHA"
 teardown_repo
 
 echo
