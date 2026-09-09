@@ -132,11 +132,14 @@ PY
 # this is a hard error, never an overwrite. Binding identity is the record's
 # docker_image_id — the revision label is never the sole check.
 publish_versioned_image() {
-    local ref record_id image_id live_digest ledger_digest remote_id
+    local ref record_id rec_ref image_id live_digest ledger_digest remote_id
     ref="$(ghcr_ref "${VERSION}")"
-    record_id="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_id)"
-    image_id="$(docker image inspect --format '{{.Id}}' \
-        "$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_ref)")"
+    record_id="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_id)" \
+        || die "qualification record unreadable (docker_image_id) — run 'make qualify'"
+    rec_ref="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_ref)" \
+        || die "qualification record unreadable (docker_image_ref) — run 'make qualify'"
+    image_id="$(docker image inspect --format '{{.Id}}' "${rec_ref}")" \
+        || die "the qualified image ${rec_ref} is not present locally — run 'make qualify'"
 
     [ -f "${LEDGER}" ] || ledger_init "${VERSION}" "$(git rev-parse HEAD)" "${ref}"
     ledger_digest="$(ledger_get image_digest)"
@@ -208,7 +211,8 @@ publish_move_latest() {
 # already exists on the wrong commit is a hard error, never a move.
 publish_tag() {
     local want local_sha origin_sha
-    want="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field source_commit)"
+    want="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field source_commit)" \
+        || die "qualification record unreadable (source_commit) — run 'make qualify'"
 
     if local_sha="$(git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null)"; then
         [ "${local_sha}" = "${want}" ] \

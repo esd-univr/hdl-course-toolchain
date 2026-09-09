@@ -198,6 +198,22 @@ eq "re-run adds no commit" "$(git rev-parse HEAD^)" "$BASE_SHA"
 teardown_repo
 
 echo
+echo "== prepare-release.sh aborts before committing when make test fails =="
+setup_repo
+printf 'check:\n\t@true\ntest:\n\t@false\n' > Makefile   # make test fails on the pinned tree
+git add Makefile; git commit -qm "make test fails"; git push -q origin main
+FAIL_BASE="$(git rev-parse origin/main)"
+out="$(bash scripts/prepare-release.sh v1.3.1 2>&1)"; rc=$?
+neq0 "prepare aborts when make test fails" "$rc"
+eq "HEAD did not move (no release commit)" "$(git rev-parse HEAD)" "$FAIL_BASE"
+case "$(git log -1 --format=%s)" in
+  "release: v1.3.1") bad "a release commit must not exist after a failed make test" ;;
+  *) ok ;;
+esac
+eq "still nothing pushed" "$(git rev-parse origin/main)" "$FAIL_BASE"
+teardown_repo
+
+echo
 echo "== publish-release.sh validation gate =="
 setup_pub() {   # scratch repo with a committed release + a fake qualified image
   setup_repo
@@ -550,7 +566,7 @@ case "\$*" in
      exit 0 ;;
   *"release create"*) touch "\$mk"; echo "https://github.com/esd-univr/hdl-course-toolchain/releases/tag/v1.3.1"; exit 0 ;;
   *"git/ref/tags/"*)
-     t="\${*##*/}"
+     t="\${2##*/}"
      if sha=\$(git -C "$WORK/up.git" rev-parse -q --verify "refs/tags/\$t^{commit}" 2>/dev/null); then
        printf '{"object":{"type":"commit","sha":"%s"}}\n' "\$sha"; exit 0
      fi
