@@ -16,6 +16,14 @@ toolchain="$(dirname "${here}")"
 
 MODE="check"
 [ "${1:-}" != "--record" ] || { MODE="record"; shift; }
+
+# `artifact-status.sh fingerprint <engine>` prints the build-input fingerprint
+# (the same value the --record path stamps) and exits, without comparing it to
+# any recorded stamp. Intercepted here, before the engine `case`, so that
+# `fingerprint` is not mistaken for an engine name.
+SUBCOMMAND=""
+[ "${1:-}" != "fingerprint" ] || { SUBCOMMAND="fingerprint"; shift; }
+
 ENGINE="${1:-docker}"
 
 case "${ENGINE}" in
@@ -38,6 +46,11 @@ fingerprint() {
         [ -f "${file}" ] && sha256sum "${file}"
     done | sha256sum | cut -d' ' -f1
 }
+
+if [ "${SUBCOMMAND}" = "fingerprint" ]; then
+    fingerprint
+    exit 0
+fi
 
 current=$(fingerprint)
 
