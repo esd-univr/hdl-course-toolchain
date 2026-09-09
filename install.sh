@@ -20,7 +20,7 @@
 set -u
 
 # --- pinned by scripts/release.sh when a release is cut -------------------
-VERSION="v1.3.1"
+VERSION="v0.0.0-dev"
 SHA256="ed32305739d91a2fc452805509e2b4c6272527bc06d7910bf55f37a4a24be699"
 # ------------------------------------------------------------------------
 

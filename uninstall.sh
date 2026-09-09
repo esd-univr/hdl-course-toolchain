@@ -21,7 +21,7 @@
 set -u
 
 # --- pinned by scripts/release.sh when a release is cut -------------------
-VERSION="v1.3.1"
+VERSION="v0.0.0-dev"
 # ------------------------------------------------------------------------
 
 IMAGE_REPO="ghcr.io/esd-univr/hdl-course-toolchain"
