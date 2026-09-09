@@ -94,7 +94,21 @@ PY
 }
 
 ledger_get() {
-    python3 -c 'import json,sys;print(json.load(open(".out/publish.json")).get(sys.argv[1]) or "")' "$1" 2>/dev/null || true
+    # Return the ledger value verbatim: "" only when the key is absent or null,
+    # "true"/"false" for a JSON boolean (never collapse False to ""), the string
+    # otherwise.
+    python3 - "$1" <<'PY' 2>/dev/null || true
+import json, sys
+v = json.load(open(".out/publish.json")).get(sys.argv[1])
+if v is None:
+    print("")
+elif v is True:
+    print("true")
+elif v is False:
+    print("false")
+else:
+    print(v)
+PY
 }
 
 ledger_set() {
@@ -158,17 +172,49 @@ then re-run: make publish VERSION=${VERSION}"
     echo "publish: published ${ref} @ ${live_digest}"
 }
 
+# --- step 2: move :latest onto the published release --------------------
+# Retag ${IMAGE_BASE}:latest to the image just published as ${IMAGE_BASE}:${VERSION}
+# and push it — but ONLY after the versioned image is confirmed published
+# (ledger image_digest set). The versioned tag is the durable identity; :latest
+# is a moving pointer, so it moves last and is re-probed afterwards to prove it
+# resolves to the exact same digest.
+publish_move_latest() {
+    local digest latest_ref live
+    digest="$(ledger_get image_digest)"
+    [ -n "${digest}" ] \
+        || die "internal: move_latest called before the versioned image was published"
+    latest_ref="${IMAGE_BASE}:latest"
+
+    if live="$(ghcr_manifest_digest latest 2>/dev/null)" && [ "${live}" = "${digest}" ]; then
+        echo "publish: ${latest_ref} already at ${digest}"
+        ledger_set latest_moved true
+        return 0
+    fi
+
+    echo "publish: moving ${latest_ref} to this release"
+    docker tag "$(ghcr_ref "${VERSION}")" "${latest_ref}"
+    docker push "${latest_ref}" \
+        || die "push to ${latest_ref} failed — re-run: make publish VERSION=${VERSION}"
+    live="$(ghcr_manifest_digest latest 2>/dev/null || true)"
+    [ "${live}" = "${digest}" ] \
+        || die "${latest_ref} resolved to ${live}, expected ${digest}"
+    ledger_set latest_moved true
+    echo "publish: ${latest_ref} -> ${digest}"
+}
+
 main() {
     publish_validate
     require_tooling
     echo "publish: validation OK — ${VERSION} @ $(git rev-parse --short HEAD) (${PLATFORM})"
     publish_versioned_image
+    publish_move_latest
     # ---------------------------------------------------------------------
-    # Tasks 10–12 continue below this line, all AFTER the gate above:
-    #   10 — retag / push ${IMAGE_BASE}:latest
+    # Tasks 11–12 continue below this line, all AFTER the gate above:
     #   11 — git tag ${VERSION} + push
     #   12 — gh release create ${VERSION}
     # ---------------------------------------------------------------------
 }
 
-main "$@"
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi

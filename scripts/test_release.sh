@@ -201,16 +201,19 @@ setup_pub() {   # scratch repo with a committed release + a fake qualified image
   IMG_ID="sha256:$(printf '%s' fixed | sha256sum | cut -c1-64)"
   DIGEST="sha256:$(printf '%s' pushdigest | sha256sum | cut -c1-64)"; export DIGEST
   # docker stub: logs args, answers `image inspect --format {{.Id}} <ref>` and
-  # `info`, and models the registry state for the versioned tag — the
-  # `:vX.Y.Z` manifest is ABSENT until a `docker push` drops the marker file,
-  # PRESENT (with $DIGEST) afterwards.
+  # `info`, and models the registry state for BOTH published tags via two marker
+  # files — `:vX.Y.Z` (`$WORK/pushed`) and `:latest` (`$WORK/lat`). Each
+  # `imagetools inspect` arm returns $DIGEST only once the matching marker
+  # exists; a `docker push` of that tag drops the marker.
   cat > "$WORK/stub/docker" <<S
 #!/usr/bin/env bash
 log="$WORK/docker.log"; echo "\$*" >> "\$log"
-pushed="$WORK/pushed"
+pushed="$WORK/pushed"; lat="$WORK/lat"
 case "\$*" in
   *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"buildx imagetools inspect ghcr.io/esd-univr/hdl-course-toolchain:latest"*) [ -f "\$lat" ] && { echo "\"${DIGEST}\""; exit 0; } || exit 1 ;;
   *"buildx imagetools inspect"*) [ -f "\$pushed" ] && { echo "\"${DIGEST}\""; exit 0; } || exit 1 ;;
+  "push ghcr.io/esd-univr/hdl-course-toolchain:latest") touch "\$lat"; exit 0 ;;
   "push "*) touch "\$pushed"; exit 0 ;;
   "tag "*) exit 0 ;;
   "info") exit 0 ;;
@@ -313,8 +316,8 @@ eq "9a ledger version" \
    "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["version"])')" "v1.3.1"
 eq "9a ledger source_commit" \
    "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["source_commit"])')" "$(git rev-parse HEAD)"
-eq "9a :latest untouched" \
-   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["latest_moved"])')" "False"
+eq "9a full run then moves :latest" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["latest_moved"])')" "True"
 teardown_repo
 
 # 9b: resume — :v1.3.1 already present with the SAME image id -> continue, no re-push
@@ -358,6 +361,107 @@ chmod +x "$WORK/stub/docker"
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "9c immutable conflict aborts" "$?"
 has "9c immutable message" "$out" "immutable"
 if grep -q "^push ghcr.*:v1.3.1" "$WORK/docker.log"; then bad "9c must not push over a conflict"; else ok; fi
+teardown_repo
+
+# 9d: :v1.3.1 manifest present, ledger cannot vouch, and the pull to prove it
+# fails -> abort "cannot prove", nothing pushed (resume state d)
+setup_pub
+cat > "$WORK/stub/docker" <<S
+#!/usr/bin/env bash
+log="$WORK/docker.log"; echo "\$*" >> "\$log"
+case "\$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"buildx imagetools inspect"*) echo "\"${DIGEST}\""; exit 0 ;;
+  "pull "*) exit 1 ;;
+  "info") exit 0 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/docker"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "9d unprovable remote aborts" "$?"
+has "9d cannot-prove message" "$out" "cannot prove"
+if grep -q "^push ghcr" "$WORK/docker.log"; then bad "9d must not push" "$(cat "$WORK/docker.log")"; else ok; fi
+teardown_repo
+
+# 9e: ledger already records image_digest == the live :v1.3.1 digest -> fast
+# path, publish_versioned_image neither pulls nor pushes (resume state b)
+setup_pub
+cat > "$WORK/stub/docker" <<S
+#!/usr/bin/env bash
+log="$WORK/docker.log"; echo "\$*" >> "\$log"
+case "\$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"buildx imagetools inspect"*) echo "\"${DIGEST}\""; exit 0 ;;
+  "info") exit 0 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/docker"
+python3 -c "import json;json.dump({'version':'v1.3.1','source_commit':'x','image_digest':'$DIGEST','versioned_ref':'$(ghcr_ref v1.3.1)','latest_moved':False,'tag_published':False,'release_created':False,'updated_at':'now'},open('.out/publish.json','w'),indent=2,sort_keys=True)"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "9e fast path exits 0" "$?" "0"
+has "9e says already published" "$out" "already published"
+if grep -q "^pull " "$WORK/docker.log"; then bad "9e must not pull" "$(cat "$WORK/docker.log")"; else ok; fi
+if grep -q "^push " "$WORK/docker.log"; then bad "9e must not push" "$(cat "$WORK/docker.log")"; else ok; fi
+teardown_repo
+
+echo
+echo "== publish: move :latest =="
+
+# 10a: happy path — :v1.3.1 pushed, THEN :latest pushed to the same digest
+setup_pub
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "10a exits 0" "$?" "0"
+grep -q "^push ghcr.io/esd-univr/hdl-course-toolchain:latest\$" "$WORK/docker.log" \
+  && ok || bad "10a :latest pushed" "$(cat "$WORK/docker.log")"
+eq "10a ledger latest_moved" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["latest_moved"])')" "True"
+vln=$(grep -n "^push ghcr.*:v1.3.1\$" "$WORK/docker.log" | head -1 | cut -d: -f1)
+lln=$(grep -n "^push ghcr.*:latest\$" "$WORK/docker.log" | head -1 | cut -d: -f1)
+{ [ -n "$vln" ] && [ -n "$lln" ] && [ "$vln" -lt "$lln" ]; } \
+  && ok || bad "10a :v1.3.1 pushed before :latest (v=$vln l=$lln)" "$(cat "$WORK/docker.log")"
+teardown_repo
+
+# 10b: resume — :latest already resolves to the ledger image_digest -> no second
+# :latest push, latest_moved still set true
+setup_pub
+python3 -c "import json;json.dump({'version':'v1.3.1','source_commit':'x','image_digest':'$DIGEST','versioned_ref':'$(ghcr_ref v1.3.1)','latest_moved':False,'tag_published':False,'release_created':False,'updated_at':'now'},open('.out/publish.json','w'),indent=2,sort_keys=True)"
+cat > "$WORK/stub/docker" <<S
+#!/usr/bin/env bash
+log="$WORK/docker.log"; echo "\$*" >> "\$log"
+case "\$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"buildx imagetools inspect"*) echo "\"${DIGEST}\""; exit 0 ;;
+  "info") exit 0 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/docker"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "10b resume exits 0" "$?" "0"
+if grep -q "push .*:latest" "$WORK/docker.log"; then bad "10b must not re-push :latest" "$(cat "$WORK/docker.log")"; else ok; fi
+has "10b logs already-at" "$out" "already at"
+eq "10b ledger latest_moved" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["latest_moved"])')" "True"
+teardown_repo
+
+echo
+echo "== publish: ledger round-trips (bool + null) =="
+setup_pub
+rc=0
+(
+  cd "$WORK/repo" || exit 9
+  # shellcheck disable=SC1091
+  . scripts/publish-release.sh v1.3.1 >/dev/null 2>&1
+  cd "$WORK/repo" || exit 9
+  ledger_init v1.3.1 deadcafe "$(ghcr_ref v1.3.1)"
+  [ "$(ledger_get latest_moved)" = "false" ]        || exit 1
+  ledger_set latest_moved true
+  [ "$(ledger_get latest_moved)" = "true" ]         || exit 2
+  ledger_set latest_moved false
+  [ "$(ledger_get latest_moved)" = "false" ]        || exit 3
+  [ "$(ledger_get image_digest)" = "" ]             || exit 4
+  ledger_set image_digest sha256:abc123
+  [ "$(ledger_get image_digest)" = "sha256:abc123" ] || exit 5
+) || rc=$?
+eq "ledger_get round-trips latest_moved bool + null image_digest" "$rc" "0"
 teardown_repo
 
 echo
