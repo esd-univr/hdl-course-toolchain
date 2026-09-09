@@ -230,6 +230,83 @@ publish_tag() {
     ledger_set tag_published true
 }
 
+# --- step 4: release notes (.out/dist/NOTES.md) ------------------------
+# Human-readable notes for the GitHub Release. Records the immutable identity of
+# what was published: source commit, architecture, the :vX.Y.Z ref and its
+# @sha256 digest (from the ledger), the fact that :latest was moved here, and a
+# qualification summary (both doctor verdicts, the build-input fingerprint and
+# when it was qualified).
+publish_release_notes() {
+    local digest arch commit binfp qat dd da
+    digest="$(ledger_get image_digest)"
+    arch="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field architecture)"
+    commit="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field source_commit)"
+    binfp="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field build_inputs_sha256)"
+    qat="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field qualified_at)"
+    dd="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field doctor_docker)"
+    da="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field doctor_apptainer)"
+    mkdir -p .out/dist
+    cat > .out/dist/NOTES.md <<EOF
+## hdl-course-toolchain ${VERSION}
+
+### Official image
+\`\`\`
+docker pull $(ghcr_ref "${VERSION}")
+$(ghcr_ref "${VERSION}")@${digest}
+\`\`\`
+\`${IMAGE_BASE}:latest\` was moved to this release.
+
+### Student install (one time)
+\`\`\`
+curl -fsSL https://github.com/${REPO}/releases/latest/download/install.sh | bash
+\`\`\`
+
+### Qualification
+| | |
+|---|---|
+| source commit | \`${commit}\` |
+| architecture | ${arch} |
+| Docker doctor | ${dd} |
+| Apptainer doctor | ${da} |
+| build-input fingerprint | \`${binfp}\` |
+| qualified at | ${qat} |
+EOF
+}
+
+# --- step 5: the GitHub Release ---------------------------------------
+# Assemble .out/dist/ (the launcher, the installer/uninstaller and a SHA256SUMS
+# over exactly those three — SHA256SUMS never checksums itself) and create the
+# Release, resumably. An existing Release on the target tag is left untouched; one
+# on a different tag is a hard error — this never blind-overwrites a Release.
+publish_github_release() {
+    mkdir -p .out/dist
+    cp bin/hdl-toolchain .out/dist/hdl-toolchain
+    cp install.sh .out/dist/install.sh
+    cp uninstall.sh .out/dist/uninstall.sh
+    ( cd .out/dist && sha256sum hdl-toolchain install.sh uninstall.sh > SHA256SUMS )
+    publish_release_notes
+
+    if gh release view "${VERSION}" >/dev/null 2>&1; then
+        local tn
+        tn="$(gh release view "${VERSION}" --json tagName --jq .tagName 2>/dev/null || true)"
+        [ "${tn}" = "${VERSION}" ] \
+            || die "a GitHub Release ${VERSION} exists but is on tag '${tn}' — refusing to touch it"
+        echo "publish: GitHub Release ${VERSION} already created — leaving it as-is"
+    else
+        echo "publish: creating GitHub Release ${VERSION}"
+        gh release create "${VERSION}" \
+            .out/dist/hdl-toolchain .out/dist/install.sh .out/dist/uninstall.sh .out/dist/SHA256SUMS \
+            --title "hdl-course-toolchain ${VERSION}" \
+            --notes-file .out/dist/NOTES.md \
+            --verify-tag \
+            || die "gh release create failed — fix the cause and re-run make publish VERSION=${VERSION}"
+    fi
+    ledger_set release_created true
+    echo
+    echo "publish: ${VERSION} is live"
+    gh release view "${VERSION}" --json url --jq .url 2>/dev/null || true
+}
+
 main() {
     publish_validate
     require_tooling
@@ -237,10 +314,14 @@ main() {
     publish_versioned_image
     publish_move_latest
     publish_tag
-    # ---------------------------------------------------------------------
-    # Task 12 continues below this line, all AFTER the gate above:
-    #   12 — gh release create ${VERSION}
-    # ---------------------------------------------------------------------
+    publish_github_release
+
+    echo
+    echo "publish: ${VERSION} summary"
+    echo "  image digest:    $(ledger_get image_digest)"
+    echo "  :latest moved:   $(ledger_get latest_moved)"
+    echo "  tag published:   $(ledger_get tag_published)"
+    echo "  release created: $(ledger_get release_created)"
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

@@ -512,6 +512,79 @@ has "11d origin conflict message" "$out" "origin tag v1.3.1 points at"
 teardown_repo
 
 echo
+echo "== publish: GitHub Release =="
+
+# 12a: full happy path — assets assembled, notes written, Release created; then a
+# full re-run is a clean no-op via the "already created" path.
+setup_pub
+cat > "$WORK/stub/gh" <<S
+#!/usr/bin/env bash
+mk="$WORK/rel"
+case "\$*" in
+  *"auth status"*) exit 0 ;;
+  *"release view"*)
+     [ -f "\$mk" ] || exit 1
+     case "\$*" in
+       *"--json tagName"*) echo v1.3.1 ;;
+       *"--json url"*) echo "https://github.com/esd-univr/hdl-course-toolchain/releases/tag/v1.3.1" ;;
+       *) echo release ;;
+     esac
+     exit 0 ;;
+  *"release create"*) touch "\$mk"; echo "https://github.com/esd-univr/hdl-course-toolchain/releases/tag/v1.3.1"; exit 0 ;;
+  *"git/ref/tags/"*)
+     t="\${*##*/}"
+     if sha=\$(git -C "$WORK/up.git" rev-parse -q --verify "refs/tags/\$t^{commit}" 2>/dev/null); then
+       printf '{"object":{"type":"commit","sha":"%s"}}\n' "\$sha"; exit 0
+     fi
+     echo '{"message":"Not Found"}'; exit 1 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "12a publish exits 0" "$?" "0"
+test -f .out/dist/SHA256SUMS && ok || bad "12a SHA256SUMS assembled"
+grep -q 'hdl-toolchain$' .out/dist/SHA256SUMS && ok || bad "12a SHA256SUMS lists hdl-toolchain"
+grep -q 'SHA256SUMS' .out/dist/SHA256SUMS && bad "12a SHA256SUMS must not checksum itself" || ok
+eq "12a SHA256SUMS has exactly three lines" \
+   "$(grep -c . .out/dist/SHA256SUMS)" "3"
+test -f .out/dist/hdl-toolchain && test -f .out/dist/install.sh && test -f .out/dist/uninstall.sh \
+   && ok || bad "12a all three release assets copied into .out/dist"
+has "12a notes carry the digest" "$(cat .out/dist/NOTES.md)" "sha256:"
+has "12a notes say :latest moved" "$(cat .out/dist/NOTES.md)" "latest"
+has "12a notes name the versioned ref" "$(cat .out/dist/NOTES.md)" "ghcr.io/esd-univr/hdl-course-toolchain:v1.3.1"
+has "12a notes carry the qualification summary" "$(cat .out/dist/NOTES.md)" "qualified at"
+has "12a announces the release" "$out" "creating GitHub Release v1.3.1"
+has "12a prints the release URL" "$out" "releases/tag/v1.3.1"
+has "12a main summary reads the ledger" "$out" "release created: true"
+eq "12a ledger release_created" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["release_created"])')" "True"
+# full resume: re-run is a clean no-op
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "12a resume exits 0" "$?" "0"
+has "12a resume says already created" "$out" "already created"
+case "$out" in *"creating GitHub Release"*) bad "12a resume must not re-create" "$out" ;; *) ok ;; esac
+eq "12a resume keeps release_created true" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["release_created"])')" "True"
+teardown_repo
+
+# 12b: a Release already exists on a DIFFERENT tag -> abort, never touch it
+setup_pub
+cat > "$WORK/stub/gh" <<'S'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"release view"*) case "$*" in *"--json tagName"*) echo v9.9.9 ;; *) echo r ;; esac; exit 0 ;;
+  *"git/ref/tags/"*) echo '{"message":"Not Found"}'; exit 1 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "12b Release on a different tag aborts" "$?"
+has "12b refuses to touch it" "$out" "refusing to touch it"
+eq "12b ledger release_created stays False" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["release_created"])')" "False"
+teardown_repo
+
+echo
 echo "== publish: ledger round-trips (bool + null) =="
 setup_pub
 rc=0
