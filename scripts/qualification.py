@@ -29,6 +29,8 @@ def load(path: str) -> dict:
             "no qualification record — run 'make qualify'") from exc
     except (OSError, ValueError) as exc:
         raise QualificationError(f"qualification record unreadable: {exc}") from exc
+    if not isinstance(rec, dict):
+        raise QualificationError("qualification record is not a JSON object")
     if rec.get("schema") != SCHEMA:
         raise QualificationError(
             f"qualification record schema {rec.get('schema')!r}, expected {SCHEMA}")
@@ -36,6 +38,65 @@ def load(path: str) -> dict:
         raise QualificationError(
             "qualification record does not say 'passed' — run 'make qualify'")
     return rec
+
+
+_VERIFY_FIELDS = [
+    ("version", "version"),
+    ("version", "version_file"),          # both CLI inputs compared to record["version"]
+    ("source_commit", "head"),
+    ("build_inputs_sha256", "build_inputs_sha256"),
+    ("release_inputs_sha256", "release_inputs_sha256"),
+    ("docker_image_id", "image_id"),
+]
+
+
+def cmd_verify(a: argparse.Namespace) -> int:
+    try:
+        rec = load(a.record)
+    except QualificationError as exc:
+        print(f"qualification: {exc}", file=sys.stderr)
+        return 1
+
+    now = {
+        "version": a.version,
+        "version_file": a.version_file,
+        "head": a.head,
+        "build_inputs_sha256": a.build_inputs_sha256,
+        "release_inputs_sha256": a.release_inputs_sha256,
+        "image_id": a.image_id,
+    }
+    bad = 0
+    for rec_key, cli_key in _VERIFY_FIELDS:
+        want, got = rec[rec_key], now[cli_key]
+        if cli_key == "version_file":
+            got = "v" + got
+        if want != got:
+            bad += 1
+            label = "source_commit" if cli_key == "head" else (
+                "docker_image_id" if cli_key == "image_id" else rec_key)
+            print(f"qualification: {label} mismatch "
+                  f"(record {want}, now {got})")
+    if a.tree_clean != "1":
+        bad += 1
+        print("qualification: working tree is dirty now (was clean at qualify)")
+    if not rec.get("source_tree_clean"):
+        bad += 1
+        print("qualification: record was not made from a clean tree")
+    if bad:
+        print(f"qualification: {bad} mismatch(es) — re-run 'make qualify' on HEAD",
+              file=sys.stderr)
+        return 1
+    print("qualification: record matches the current tree, VERSION and image")
+    return 0
+
+
+def cmd_get(a: argparse.Namespace) -> int:
+    rec = load(a.record)
+    if a.field not in rec:
+        print(f"qualification: no field {a.field!r}", file=sys.stderr)
+        return 2
+    print(rec[a.field])
+    return 0
 
 
 def cmd_record(a: argparse.Namespace) -> int:
@@ -88,6 +149,19 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--doctor-docker", required=True)
     r.add_argument("--doctor-apptainer", required=True)
     r.set_defaults(func=cmd_record)
+
+    v = sub.add_parser("verify", help="check a record against the current state")
+    for opt in ("--record", "--version", "--version-file", "--head",
+                "--build-inputs-sha256", "--release-inputs-sha256", "--image-id"):
+        v.add_argument(opt, required=True)
+    v.add_argument("--tree-clean", required=True, choices=["0", "1"])
+    v.set_defaults(func=cmd_verify)
+
+    g = sub.add_parser("get", help="print one field of a record")
+    g.add_argument("--record", required=True)
+    g.add_argument("--field", required=True)
+    g.set_defaults(func=cmd_get)
+
     return p
 
 
