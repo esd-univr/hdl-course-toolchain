@@ -4,11 +4,11 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-# The image `make build` produces and `doctor` / `shell` qualify against. It
-# defaults to the local name `hdl-course-toolchain:latest`, so a maintainer
-# never needs the published GHCR image to qualify a candidate. The release
-# workflow builds under the GHCR name by exporting HDL_TOOLCHAIN_IMAGE /
-# HDL_TOOLCHAIN_TAG, which these variables pick up so `doctor` inspects the
+# The image `make build` produces and `doctor` / `shell` / `qualify` qualify
+# against. It defaults to the local name `hdl-course-toolchain:latest`, so a
+# maintainer never needs the published GHCR image to qualify a candidate.
+# Exporting HDL_TOOLCHAIN_IMAGE / HDL_TOOLCHAIN_TAG builds and inspects under a
+# different name instead; these variables pick that up so `doctor` inspects the
 # same image `build` made. `build` / `export` / `sif` read those env vars
 # directly (scripts/build-image.sh), so they are not re-exported here.
 IMAGE ?= $(or $(HDL_TOOLCHAIN_IMAGE),hdl-course-toolchain)
