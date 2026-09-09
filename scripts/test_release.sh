@@ -53,6 +53,15 @@ eq "IMAGE_BASE constant" "$IMAGE_BASE" "ghcr.io/esd-univr/hdl-course-toolchain"
 eq "PLATFORM_DEFAULT constant" "$PLATFORM_DEFAULT" "linux/amd64"
 
 echo
+echo "== machinery wiring =="
+make -n prepare VERSION=v1.3.1 >/dev/null 2>&1 && ok || bad "make prepare target exists"
+make -n publish VERSION=v1.3.1 >/dev/null 2>&1 && ok || bad "make publish target exists"
+rel_out="$(make release 2>&1 || true)"
+has "make release points at new flow" "$rel_out" "make prepare"
+test ! -e scripts/release.sh && ok || bad "scripts/release.sh removed"
+grep -q 'scripts/prepare-release.sh' Makefile && ok || bad "Makefile calls prepare-release.sh"
+
+echo
 echo "== prepare-release.sh preconditions =="
 setup_repo() {
   WORK="$(mktemp -d)"; export WORK

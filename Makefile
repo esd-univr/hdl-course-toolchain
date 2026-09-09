@@ -15,7 +15,7 @@ IMAGE ?= $(or $(HDL_TOOLCHAIN_IMAGE),hdl-course-toolchain)
 TAG   ?= $(or $(HDL_TOOLCHAIN_TAG),latest)
 SIF   ?= $(or $(HDL_TOOLCHAIN_SIF),$(CURDIR)/.out/hdl-course-toolchain.sif)
 
-.PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify release clean
+.PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify prepare publish release clean
 
 help: ## Show the available commands
 	@printf 'HDL Course Toolchain\n\n'
@@ -31,14 +31,16 @@ help: ## Show the available commands
 	@printf '\nRun\n'
 	@printf '  make doctor     Run functional smoke tests inside the OCI image\n'
 	@printf '  make doctor-sif Run the same smoke tests inside the Apptainer SIF\n'
-	@printf '  make qualify    Full release qualification (build, both doctors, in order)\n'
 	@printf '  make shell      Open an interactive shell inside the OCI image\n'
 	@printf '\nArtifacts\n'
 	@printf '  make export    Export the OCI image as a docker-archive\n'
 	@printf '  make sif       Build the Apptainer SIF from the OCI image\n'
+	@printf '\nRelease  (maintainer workstation; see docs/releasing.md)\n'
+	@printf '  make prepare   Pin a version and commit the release commit: make prepare VERSION=vX.Y.Z\n'
+	@printf '  make qualify   Full local qualification; writes .out/qualification.json\n'
+	@printf '  make publish   Publish the qualified image, tag and GitHub Release: make publish VERSION=vX.Y.Z\n'
 	@printf '\nMaintenance\n'
 	@printf '  make bump      Bump one pin: make bump TOOL=yosys VERSION=v0.68\n'
-	@printf '  make release   Cut a release: make release VERSION=vX.Y.Z (see docs/releasing.md)\n'
 	@printf '  make clean     Remove generated artifacts under .out/\n'
 
 software: ## Show the planned software inventory
@@ -65,9 +67,19 @@ test: ## Run the launcher, installer and uninstaller test suites
 	@printf '\n==> uninstaller tests\n'
 	@bash scripts/test_uninstall.sh
 
-release: ## Cut a release (git half); CI builds and publishes. make release VERSION=vX.Y.Z
-	@test -n "$(VERSION)" || { printf 'usage: make release VERSION=vX.Y.Z\n' >&2; exit 2; }
-	@./scripts/release.sh "$(VERSION)"
+prepare: ## Pin a version and commit "release: vX.Y.Z": make prepare VERSION=vX.Y.Z
+	@test -n "$(VERSION)" || { printf 'usage: make prepare VERSION=vX.Y.Z\n' >&2; exit 2; }
+	@./scripts/prepare-release.sh "$(VERSION)"
+
+publish: ## Publish the already-qualified image + tag + Release: make publish VERSION=vX.Y.Z
+	@test -n "$(VERSION)" || { printf 'usage: make publish VERSION=vX.Y.Z\n' >&2; exit 2; }
+	@./scripts/publish-release.sh "$(VERSION)"
+
+release: ## Removed — use prepare -> qualify -> publish
+	@printf 'make release was removed. The flow is now:\n\n' >&2
+	@printf '  make prepare VERSION=vX.Y.Z\n  make qualify\n  make publish VERSION=vX.Y.Z\n\n' >&2
+	@printf 'See docs/releasing.md.\n' >&2
+	@exit 2
 
 updates: ## Report pinned versions against upstream (network)
 	@$(PYTHON) scripts/configure.py check-updates $(if $(TOOL),--tool $(TOOL)) $(if $(REFRESH),--refresh)
@@ -115,20 +127,28 @@ qualify: ## Run the full release qualification in order and record it
 	@printf '\n==> recording qualification\n'
 	@test -z "$$(git status --porcelain)" || { \
 	    printf 'qualify: tree went dirty during qualification; not recording\n' >&2; exit 1; }
-	@set -eu; . scripts/release_lib.sh; \
+	@set -eu; set -o pipefail; . scripts/release_lib.sh; \
+	  mkdir -p .out; \
+	  q_version="v$$(cat VERSION)"; \
+	  q_commit="$$(git rev-parse HEAD)"; \
+	  q_build_inputs="$$(build_inputs_fingerprint)"; \
+	  q_release_inputs="$$(release_inputs_fingerprint)"; \
+	  q_image_id="$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}')"; \
+	  q_sif_sha="$$(sha256sum "$(SIF)" | cut -d' ' -f1)"; \
+	  q_arch="$$(uname -m)"; \
 	  python3 scripts/qualification.py record \
 	    --out .out/qualification.json \
-	    --version "v$$(cat VERSION)" \
-	    --source-commit "$$(git rev-parse HEAD)" \
+	    --version "$$q_version" \
+	    --source-commit "$$q_commit" \
 	    --tree-clean 1 \
-	    --build-inputs-sha256 "$$(build_inputs_fingerprint)" \
-	    --release-inputs-sha256 "$$(release_inputs_fingerprint)" \
+	    --build-inputs-sha256 "$$q_build_inputs" \
+	    --release-inputs-sha256 "$$q_release_inputs" \
 	    --docker-image-ref "$(IMAGE):$(TAG)" \
-	    --docker-image-id "$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}')" \
+	    --docker-image-id "$$q_image_id" \
 	    --sif-path "$(SIF)" \
-	    --sif-sha256 "$$(sha256sum "$(SIF)" | cut -d' ' -f1)" \
+	    --sif-sha256 "$$q_sif_sha" \
 	    --platform "$${HDL_TOOLCHAIN_PLATFORM:-linux/amd64}" \
-	    --arch "$$(uname -m)" \
+	    --arch "$$q_arch" \
 	    --doctor-docker pass --doctor-apptainer pass
 	@printf '\n==> qualification summary\n'
 	@printf '    repository checks     PASS\n'
