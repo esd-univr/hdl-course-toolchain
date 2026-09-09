@@ -95,7 +95,26 @@ Only artifacts that actually exist are deleted. `v1.3.0` needs nothing.
    or `git push --force origin main`).
 7. The failed Actions run `34219055168` is left as historical evidence.
 
-Implementation of the new machinery then proceeds on a branch
+### 3.3 Preserving the feature branch across the rewrite
+
+`feature/local-release-machinery` already exists, and its first commit
+(`f1f46fc`, the spec document) is based on **pre-cleanup** history — its
+ancestry contains `30cb593` and `6805fa1`.
+
+After `main` is reconstructed and force-updated:
+
+1. Rebase `feature/local-release-machinery` onto the reconstructed `main`,
+   carrying **only** the intended feature/spec commits
+   (`git rebase --onto <new-main> 6805fa1 feature/local-release-machinery`, or
+   cherry-pick the feature commits onto a fresh branch off the new `main`).
+2. Verify `git log --oneline <new-main>..feature/local-release-machinery`
+   contains no `release: v1.3.0` / `release: v1.3.1` commit and no `30cb593` /
+   `6805fa1` in its ancestry (`git merge-base --is-ancestor 30cb593
+   feature/... ` and the same for `6805fa1` must both be false).
+3. Only then continue implementation, so that merging the feature branch back
+   into `main` can never reintroduce the two premature `release:` commits.
+
+Implementation of the new machinery proceeds on the rebased
 `feature/local-release-machinery`.
 
 ## 4. Phase structure
@@ -121,14 +140,16 @@ Makefile targets:
 ### 4.1 `make prepare VERSION=vX.Y.Z`
 
 **Preconditions** (any failure aborts, tree untouched). The idempotent-resume
-check in the last bullet is evaluated first; if it matches, `prepare` reports
-and exits 0 without re-checking the dev-sentinel precondition (which no longer
-holds once a release is pinned).
+check (see below) is evaluated **first**; if it matches, `prepare` reports and
+exits 0 without re-checking the preconditions that no longer hold once a
+release is pinned (the dev sentinel, and `HEAD == origin/main`).
 
 - `VERSION` argument present and matches `v[0-9]+.[0-9]+.[0-9]+`.
 - Current branch is `main`.
 - Working tree clean (`git status --porcelain` empty).
-- `git fetch origin` succeeds and `main` is not behind `origin/main`.
+- `git fetch origin` succeeds and `git rev-parse HEAD` == `git rev-parse
+  origin/main` **exactly**. A locally-ahead or diverged `main` aborts — a
+  release is never prepared from unpublished local commits.
 - Version unused, all four checked:
   - no local tag `vX.Y.Z`;
   - no origin tag (`gh api .../git/ref/tags/vX.Y.Z` → 404 expected);
@@ -155,10 +176,12 @@ holds once a release is pinned).
 **Never:** create or push a tag, create a GitHub Release, or push anything to
 GHCR.
 
-**Idempotent resume:** if invoked again with the same `VERSION` while HEAD is
-already `release: vX.Y.Z` for that version, the tree is clean, and the four
-"unused" checks still pass, report "already prepared at HEAD `<sha>`" and exit
-0.
+**Idempotent resume:** if invoked again with the same `VERSION` while the tree
+is clean, HEAD is a `release: vX.Y.Z` commit for that version that pins all four
+files consistently, HEAD's parent is `origin/main` (i.e. HEAD is `origin/main`
+plus exactly the local release commit), and the four "unused" checks still
+pass, report "already prepared at HEAD `<sha>`" and exit 0. Any other divergence
+from `origin/main` aborts.
 
 After `prepare`, HEAD is the exact commit intended to become the release.
 
@@ -170,14 +193,25 @@ order, followed by the printed human evidence block.
 
 **New:**
 
-- At the very start, `rm -f .out/qualification.json` so a mid-run failure can
-  never leave a stale "passed" record behind.
-- As the final step, only when all five stages passed, write
-  `.out/qualification.json` (schema in §5) via `scripts/qualification.sh`.
+- **Before anything else**, in order:
+  1. `rm -f .out/qualification.json` — no stale "passed" record survives a
+     re-run;
+  2. require `git status --porcelain` to be empty — abort with a clear message
+     if the tree is dirty, **before** building. A dirty tree would let
+     uncommitted changes reach the Docker image while `source_commit` still
+     names the old HEAD, so no publishable record may come from it;
+  3. only then run the five stages.
+- As the final step, only when all five stages passed and the tree is still
+  clean, write `.out/qualification.json` (schema in §5) via
+  `scripts/qualification.sh`. `source_tree_clean: true` is written only because
+  step 2 enforced it.
 - The printed evidence block gains one line pointing at the JSON record.
 
-`make qualify` still needs no network and is still the deliberate, human-run
-gate. It is **not** run as part of `prepare` or `publish`.
+`make qualify` does not depend on GitHub, GHCR, or an already-published image,
+and is the deliberate, human-run gate — **not** run as part of `prepare` or
+`publish`. It is not strictly network-free, though: `make build` depends on
+`make fetch`, so if the pinned source archives are not already cached under
+`.out/sources/`, fetching them may require network access.
 
 ### 4.3 `make publish VERSION=vX.Y.Z`
 
@@ -224,8 +258,10 @@ The resumable design (§6) makes a mid-push auth failure safe to recover from.
 4. Verify `:vX.Y.Z` and `:latest` resolve to the same digest.
 5. Create the annotated git tag `vX.Y.Z` on the qualified `source_commit`
    (local), then publish it to origin.
-6. Create the GitHub Release `vX.Y.Z` with assets `hdl-toolchain`, `install.sh`,
-   `uninstall.sh`, `SHA256SUMS` and generated notes.
+6. Assemble `SHA256SUMS` as the `sha256sum` lines for `hdl-toolchain`,
+   `install.sh` and `uninstall.sh` (it does not include itself), then create the
+   GitHub Release `vX.Y.Z` with the four assets — `hdl-toolchain`, `install.sh`,
+   `uninstall.sh`, `SHA256SUMS` — and generated notes.
 
 **Release notes** include: source commit; qualified architecture; official
 versioned reference `ghcr.io/esd-univr/hdl-course-toolchain:vX.Y.Z`; the
@@ -295,10 +331,19 @@ For every resource, `publish` distinguishes three states:
 
 Concretely:
 
-- **Versioned GHCR image** — absent → push. Exists with the digest recorded in
-  `.out/publish.json` (or, on a fresh ledger, exists with
-  `org.opencontainers.image.revision` label == `source_commit`) → continue.
-  Exists with a different digest → ABORT (versioned releases are immutable).
+- **Versioned GHCR image** — absent → push.
+  Exists → it must be **proven** to be the exact locally qualified image:
+  - if `.out/publish.json` records an `image_digest` and the live `:vX.Y.Z`
+    digest equals it → continue;
+  - otherwise (fresh ledger, or ledger without a digest), pull `:vX.Y.Z` for the
+    qualified `platform` and compare the pulled image's Docker `.Id` against the
+    record's `docker_image_id`. Equal → continue (adopt the live digest into the
+    ledger). Not equal → ABORT (versioned releases are immutable).
+  - `org.opencontainers.image.revision == source_commit` may be checked as
+    additional provenance but is **never** the sole identity check: two
+    different builds of one commit can carry the same revision label.
+  - If the existing remote version cannot be proven to be the qualified
+    artifact (e.g. it cannot be pulled/inspected), ABORT rather than guess.
 - **`:latest`** — moved only after `:vX.Y.Z` is confirmed present. If `:latest`
   already resolves to `image_digest` → continue.
 - **Git tag** — absent → create/publish. Exists pointing at `source_commit` →
@@ -373,7 +418,9 @@ and `gh`, asserting:
 - git tag already exists pointing elsewhere → aborts;
 - GHCR versioned image already exists with a different digest → aborts;
 - safe resume when `.out/publish.json` + live state show matching resources;
-- `SHA256SUMS` content is correct for the four assets;
+- `SHA256SUMS` lists correct checksums for `hdl-toolchain`, `install.sh` and
+  `uninstall.sh` (it does not checksum itself); it is the fourth distributed
+  asset;
 - `prepare` guards: not on `main`, dirty tree, version already used → abort;
 - `prepare` idempotency when HEAD already pins the target;
 - existing launcher / installer / uninstaller suites still pass
