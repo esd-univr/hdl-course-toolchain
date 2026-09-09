@@ -24,6 +24,7 @@ case "${VERSION}" in
 esac
 
 RECORD=".out/qualification.json"
+LEDGER=".out/publish.json"
 # PLATFORM comes from the record so a later push targets exactly the qualified
 # platform; fall back to the default when the record is absent (the gate then
 # aborts anyway).
@@ -76,13 +77,94 @@ require_tooling() {
     gh auth status >/dev/null 2>&1    || die "gh is not authenticated — run: gh auth login"
 }
 
+# --- ledger (.out/publish.json) ------------------------------------------
+# The resumable record of what this release has already published. JSON handling
+# stays in Python so shell never parses or emits JSON.
+ledger_init() {
+    python3 - "$@" <<'PY'
+import json, sys, datetime
+version, commit, ref = sys.argv[1:4]
+json.dump({
+    "version": version, "source_commit": commit,
+    "image_digest": None, "versioned_ref": ref,
+    "latest_moved": False, "tag_published": False, "release_created": False,
+    "updated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}, open(".out/publish.json", "w"), indent=2, sort_keys=True)
+PY
+}
+
+ledger_get() {
+    python3 -c 'import json,sys;print(json.load(open(".out/publish.json")).get(sys.argv[1]) or "")' "$1" 2>/dev/null || true
+}
+
+ledger_set() {
+    python3 - "$1" "$2" <<'PY'
+import json, sys, datetime
+key, val = sys.argv[1], sys.argv[2]
+p = ".out/publish.json"
+d = json.load(open(p))
+if val in ("true", "false"):
+    d[key] = (val == "true")
+else:
+    d[key] = val
+d["updated_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+json.dump(d, open(p, "w"), indent=2, sort_keys=True)
+PY
+}
+
+# --- step 1: publish the versioned image --------------------------------
+# Push ${IMAGE_BASE}:${VERSION} from the qualified local image, resumably.
+# The versioned tag is IMMUTABLE: if it already exists with a different image
+# this is a hard error, never an overwrite. Binding identity is the record's
+# docker_image_id — the revision label is never the sole check.
+publish_versioned_image() {
+    local ref record_id image_id live_digest ledger_digest remote_id
+    ref="$(ghcr_ref "${VERSION}")"
+    record_id="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_id)"
+    image_id="$(docker image inspect --format '{{.Id}}' \
+        "$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_ref)")"
+
+    [ -f "${LEDGER}" ] || ledger_init "${VERSION}" "$(git rev-parse HEAD)" "${ref}"
+    ledger_digest="$(ledger_get image_digest)"
+
+    if live_digest="$(ghcr_manifest_digest "${VERSION}" 2>/dev/null)"; then
+        if [ -n "${ledger_digest}" ] && [ "${ledger_digest}" = "${live_digest}" ]; then
+            echo "publish: ${ref} already published (${live_digest})"
+            return 0
+        fi
+        # The tag exists but the ledger cannot vouch for it — PROVE the remote
+        # image is the qualified one by pulling it and comparing its image id.
+        if ! remote_id="$(remote_image_id "${VERSION}" "${PLATFORM}")"; then
+            die "${ref} already exists but cannot be pulled/inspected — cannot prove the published :${VERSION} is the qualified image"
+        fi
+        [ "${remote_id}" = "${record_id}" ] \
+            || die "${ref} already exists with a different image (${remote_id} != ${record_id}) — versioned releases are immutable"
+        echo "publish: ${ref} already published and matches the qualified image"
+        ledger_set image_digest "${live_digest}"
+        return 0
+    fi
+
+    echo "publish: pushing ${ref}"
+    docker tag "${image_id}" "${ref}"
+    if ! docker push "${ref}"; then
+        die "push to ${ref} failed. If this is an authorization error, GHCR needs a token with package-write scope:
+  gh auth refresh -s write:packages
+  gh auth token | docker login ghcr.io -u <github-user> --password-stdin
+then re-run: make publish VERSION=${VERSION}"
+    fi
+    live_digest="$(ghcr_manifest_digest "${VERSION}")" \
+        || die "pushed ${ref} but cannot read its manifest digest back"
+    ledger_set image_digest "${live_digest}"
+    echo "publish: published ${ref} @ ${live_digest}"
+}
+
 main() {
     publish_validate
     require_tooling
     echo "publish: validation OK — ${VERSION} @ $(git rev-parse --short HEAD) (${PLATFORM})"
+    publish_versioned_image
     # ---------------------------------------------------------------------
-    # Tasks 9–12 continue below this line, all AFTER the gate above:
-    #   9  — docker push  ${IMAGE_BASE}:${VERSION}   (first real registry write)
+    # Tasks 10–12 continue below this line, all AFTER the gate above:
     #   10 — retag / push ${IMAGE_BASE}:latest
     #   11 — git tag ${VERSION} + push
     #   12 — gh release create ${VERSION}

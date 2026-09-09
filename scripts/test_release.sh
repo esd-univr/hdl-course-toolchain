@@ -199,14 +199,22 @@ setup_pub() {   # scratch repo with a committed release + a fake qualified image
   HEAD_SHA="$(git rev-parse HEAD)"
   . scripts/release_lib.sh
   IMG_ID="sha256:$(printf '%s' fixed | sha256sum | cut -c1-64)"
-  # docker stub answers `image inspect --format {{.Id}} <ref>` and `info`
+  DIGEST="sha256:$(printf '%s' pushdigest | sha256sum | cut -c1-64)"; export DIGEST
+  # docker stub: logs args, answers `image inspect --format {{.Id}} <ref>` and
+  # `info`, and models the registry state for the versioned tag — the
+  # `:vX.Y.Z` manifest is ABSENT until a `docker push` drops the marker file,
+  # PRESENT (with $DIGEST) afterwards.
   cat > "$WORK/stub/docker" <<S
 #!/usr/bin/env bash
+log="$WORK/docker.log"; echo "\$*" >> "\$log"
+pushed="$WORK/pushed"
 case "\$*" in
   *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
-  *"image inspect"*) exit 1 ;;
-  *"imagetools inspect"*) exit 1 ;;
+  *"buildx imagetools inspect"*) [ -f "\$pushed" ] && { echo "\"${DIGEST}\""; exit 0; } || exit 1 ;;
+  "push "*) touch "\$pushed"; exit 0 ;;
+  "tag "*) exit 0 ;;
   "info") exit 0 ;;
+  *"image inspect"*) exit 1 ;;
   *) exit 0 ;;
 esac
 S
@@ -244,12 +252,14 @@ teardown_repo
 setup_pub
 printf 'CHANGED\n' >> versions.yml
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8d build inputs changed rejected" "$?"
+has "8d names the build-inputs mismatch" "$out" "build_inputs_sha256 mismatch"
 teardown_repo
 
 # 8e: release inputs changed
 setup_pub
 printf 'x\n' >> uninstall.sh
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8e release inputs changed rejected" "$?"
+has "8e names the release-inputs mismatch" "$out" "release_inputs_sha256 mismatch"
 teardown_repo
 
 # 8f: wrong local image id
@@ -271,6 +281,83 @@ setup_pub
 rm -f .out/qualification.json
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8g missing record rejected" "$?"
 has "8g missing record message" "$out" "make qualify"
+teardown_repo
+
+# 8h: gh not authenticated -> require_tooling aborts
+setup_pub
+cat > "$WORK/stub/gh" <<'S'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) echo "not logged in" >&2; exit 1 ;;
+  *"release view"*) exit 1 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "8h gh unauthenticated rejected" "$?"
+has "8h gh auth message" "$out" "gh is not authenticated"
+teardown_repo
+
+echo
+echo "== publish: versioned image =="
+
+# 9a: fresh push — :v1.3.1 absent, pushed, digest read back into the ledger
+setup_pub
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "9a fresh push exits 0" "$?" "0"
+grep -q "push ghcr.io/esd-univr/hdl-course-toolchain:v1.3.1" "$WORK/docker.log" \
+  && ok || bad "9a versioned push happened" "$(cat "$WORK/docker.log")"
+has "9a announces the publish" "$out" "published"
+eq "9a ledger records the live digest" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["image_digest"])')" "$DIGEST"
+eq "9a ledger version" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["version"])')" "v1.3.1"
+eq "9a ledger source_commit" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["source_commit"])')" "$(git rev-parse HEAD)"
+eq "9a :latest untouched" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["latest_moved"])')" "False"
+teardown_repo
+
+# 9b: resume — :v1.3.1 already present with the SAME image id -> continue, no re-push
+setup_pub
+cat > "$WORK/stub/docker" <<S
+#!/usr/bin/env bash
+log="$WORK/docker.log"; echo "\$*" >> "\$log"
+case "\$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"image inspect --format {{.Id}} ghcr"*) echo "${IMG_ID}"; exit 0 ;;
+  *"buildx imagetools inspect"*) echo "\"${DIGEST}\""; exit 0 ;;
+  "pull "*) exit 0 ;;
+  "tag "*) exit 0 ;;
+  "info") exit 0 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/docker"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "9b resume exits 0" "$?" "0"
+if grep -q "^push ghcr.*:v1.3.1" "$WORK/docker.log"; then bad "9b should NOT re-push"; else ok; fi
+has "9b resume message" "$out" "already published"
+eq "9b ledger adopts the live digest" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["image_digest"])')" "$DIGEST"
+teardown_repo
+
+# 9c: conflict — :v1.3.1 present with a DIFFERENT image id -> abort, immutable
+setup_pub
+cat > "$WORK/stub/docker" <<S
+#!/usr/bin/env bash
+log="$WORK/docker.log"; echo "\$*" >> "\$log"
+case "\$*" in
+  *"image inspect --format {{.Id}} hdl-course-toolchain:latest"*) echo "${IMG_ID}"; exit 0 ;;
+  *"image inspect --format {{.Id}} ghcr"*) echo "sha256:different"; exit 0 ;;
+  *"buildx imagetools inspect"*) echo "\"${DIGEST}\""; exit 0 ;;
+  "pull "*) exit 0 ;;
+  "info") exit 0 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/docker"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "9c immutable conflict aborts" "$?"
+has "9c immutable message" "$out" "immutable"
+if grep -q "^push ghcr.*:v1.3.1" "$WORK/docker.log"; then bad "9c must not push over a conflict"; else ok; fi
 teardown_repo
 
 echo
