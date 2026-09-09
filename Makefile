@@ -4,18 +4,18 @@ SHELL := /bin/bash
 PYTHON ?= python3
 WORKSPACE ?= $(CURDIR)
 
-# The image `make build` produces and `doctor` / `shell` qualify against. It
-# defaults to the local name `hdl-course-toolchain:latest`, so a maintainer
-# never needs the published GHCR image to qualify a candidate. The release
-# workflow builds under the GHCR name by exporting HDL_TOOLCHAIN_IMAGE /
-# HDL_TOOLCHAIN_TAG, which these variables pick up so `doctor` inspects the
+# The image `make build` produces and `doctor` / `shell` / `qualify` qualify
+# against. It defaults to the local name `hdl-course-toolchain:latest`, so a
+# maintainer never needs the published GHCR image to qualify a candidate.
+# Exporting HDL_TOOLCHAIN_IMAGE / HDL_TOOLCHAIN_TAG builds and inspects under a
+# different name instead; these variables pick that up so `doctor` inspects the
 # same image `build` made. `build` / `export` / `sif` read those env vars
 # directly (scripts/build-image.sh), so they are not re-exported here.
 IMAGE ?= $(or $(HDL_TOOLCHAIN_IMAGE),hdl-course-toolchain)
 TAG   ?= $(or $(HDL_TOOLCHAIN_TAG),latest)
 SIF   ?= $(or $(HDL_TOOLCHAIN_SIF),$(CURDIR)/.out/hdl-course-toolchain.sif)
 
-.PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify release clean
+.PHONY: help software check test updates bump fetch build doctor doctor-sif shell export sif qualify prepare publish release clean
 
 help: ## Show the available commands
 	@printf 'HDL Course Toolchain\n\n'
@@ -31,14 +31,16 @@ help: ## Show the available commands
 	@printf '\nRun\n'
 	@printf '  make doctor     Run functional smoke tests inside the OCI image\n'
 	@printf '  make doctor-sif Run the same smoke tests inside the Apptainer SIF\n'
-	@printf '  make qualify    Full release qualification (build, both doctors, in order)\n'
 	@printf '  make shell      Open an interactive shell inside the OCI image\n'
 	@printf '\nArtifacts\n'
 	@printf '  make export    Export the OCI image as a docker-archive\n'
 	@printf '  make sif       Build the Apptainer SIF from the OCI image\n'
+	@printf '\nRelease  (maintainer workstation; see docs/releasing.md)\n'
+	@printf '  make prepare   Pin a version and commit the release commit: make prepare VERSION=vX.Y.Z\n'
+	@printf '  make qualify   Full local qualification; writes .out/qualification.json\n'
+	@printf '  make publish   Publish the qualified image, tag and GitHub Release: make publish VERSION=vX.Y.Z\n'
 	@printf '\nMaintenance\n'
 	@printf '  make bump      Bump one pin: make bump TOOL=yosys VERSION=v0.68\n'
-	@printf '  make release   Cut a release: make release VERSION=vX.Y.Z (see docs/releasing.md)\n'
 	@printf '  make clean     Remove generated artifacts under .out/\n'
 
 software: ## Show the planned software inventory
@@ -64,10 +66,22 @@ test: ## Run the launcher, installer and uninstaller test suites
 	@bash scripts/test_install.sh
 	@printf '\n==> uninstaller tests\n'
 	@bash scripts/test_uninstall.sh
+	@printf '\n==> release machinery tests\n'
+	@bash scripts/test_release.sh
 
-release: ## Cut a release (git half); CI builds and publishes. make release VERSION=vX.Y.Z
-	@test -n "$(VERSION)" || { printf 'usage: make release VERSION=vX.Y.Z\n' >&2; exit 2; }
-	@./scripts/release.sh "$(VERSION)"
+prepare: ## Pin a version and commit "release: vX.Y.Z": make prepare VERSION=vX.Y.Z
+	@test -n "$(VERSION)" || { printf 'usage: make prepare VERSION=vX.Y.Z\n' >&2; exit 2; }
+	@./scripts/prepare-release.sh "$(VERSION)"
+
+publish: ## Publish the already-qualified image + tag + Release: make publish VERSION=vX.Y.Z
+	@test -n "$(VERSION)" || { printf 'usage: make publish VERSION=vX.Y.Z\n' >&2; exit 2; }
+	@./scripts/publish-release.sh "$(VERSION)"
+
+release: ## Removed — use prepare -> qualify -> publish
+	@printf 'make release was removed. The flow is now:\n\n' >&2
+	@printf '  make prepare VERSION=vX.Y.Z\n  make qualify\n  make publish VERSION=vX.Y.Z\n\n' >&2
+	@printf 'See docs/releasing.md.\n' >&2
+	@exit 2
 
 updates: ## Report pinned versions against upstream (network)
 	@$(PYTHON) scripts/configure.py check-updates $(if $(TOOL),--tool $(TOOL)) $(if $(REFRESH),--refresh)
@@ -98,7 +112,10 @@ export: ## Export the OCI image for Apptainer
 sif: build ## Derive the Apptainer SIF from the OCI image
 	@./scripts/build-sif.sh
 
-qualify: ## Run the full release qualification in order
+qualify: ## Run the full release qualification in order and record it
+	@rm -f .out/qualification.json .out/publish.json
+	@test -z "$$(git status --porcelain)" || { \
+	    printf 'qualify: working tree is dirty; commit or stash before qualifying\n' >&2; exit 1; }
 	@printf '==> 1/5 repository checks\n'
 	@$(MAKE) --no-print-directory check
 	@printf '\n==> 2/5 OCI image\n'
@@ -109,6 +126,32 @@ qualify: ## Run the full release qualification in order
 	@$(MAKE) --no-print-directory sif
 	@printf '\n==> 5/5 Apptainer toolchain-doctor\n'
 	@$(MAKE) --no-print-directory doctor-sif
+	@printf '\n==> recording qualification\n'
+	@test -z "$$(git status --porcelain)" || { \
+	    printf 'qualify: tree went dirty during qualification; not recording\n' >&2; exit 1; }
+	@set -eu; set -o pipefail; . scripts/release_lib.sh; \
+	  mkdir -p .out; \
+	  q_version="v$$(cat VERSION)"; \
+	  q_commit="$$(git rev-parse HEAD)"; \
+	  q_build_inputs="$$(build_inputs_fingerprint)"; \
+	  q_release_inputs="$$(release_inputs_fingerprint)"; \
+	  q_image_id="$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}')"; \
+	  q_sif_sha="$$(sha256sum "$(SIF)" | cut -d' ' -f1)"; \
+	  q_arch="$$(uname -m)"; \
+	  python3 scripts/qualification.py record \
+	    --out .out/qualification.json \
+	    --version "$$q_version" \
+	    --source-commit "$$q_commit" \
+	    --tree-clean 1 \
+	    --build-inputs-sha256 "$$q_build_inputs" \
+	    --release-inputs-sha256 "$$q_release_inputs" \
+	    --docker-image-ref "$(IMAGE):$(TAG)" \
+	    --docker-image-id "$$q_image_id" \
+	    --sif-path "$(SIF)" \
+	    --sif-sha256 "$$q_sif_sha" \
+	    --platform "$${HDL_TOOLCHAIN_PLATFORM:-linux/amd64}" \
+	    --arch "$$q_arch" \
+	    --doctor-docker pass --doctor-apptainer pass
 	@printf '\n==> qualification summary\n'
 	@printf '    repository checks     PASS\n'
 	@printf '    OCI/Docker build      PASS\n'
@@ -118,9 +161,9 @@ qualify: ## Run the full release qualification in order
 	@printf '    architecture          %s\n' "$$(uname -m)"
 	@printf '    image                 %s\n' \
 	    "$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}' | cut -c8-19)"
-	@printf '    build inputs          %s\n' "$$(cat .out/build-inputs.docker.sha256 | cut -c1-12)"
 	@printf '    source commit         %s\n' "$$(git rev-parse HEAD)"
-	@printf '\nQualification passed. This block is the evidence for a release.\n'
+	@printf '    record                .out/qualification.json\n'
+	@printf '\nQualification passed and recorded. Run: make publish VERSION=v%s\n' "$$(cat VERSION)"
 
 clean: ## Remove generated artifacts
 	@rm -rf .out

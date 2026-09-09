@@ -2,6 +2,7 @@ name: Check
 
 on:
   push:
+    branches: ['**']   # branch pushes only — a release tag push triggers no CI
   pull_request:
 
 permissions:

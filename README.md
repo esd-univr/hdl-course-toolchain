@@ -295,7 +295,7 @@ complete toolchain has been qualified on that architecture.
 .
 ├── Containerfile             # canonical OCI build
 ├── versions.yml              # single source of truth for tool/build pins
-├── VERSION                   # toolchain release version (pinned by scripts/release.sh)
+├── VERSION                   # toolchain release version (pinned by scripts/prepare-release.sh)
 ├── Makefile                  # human-facing command interface
 ├── install.sh                # student installer, published as a Release asset
 ├── uninstall.sh              # conservative uninstaller, published as a Release asset

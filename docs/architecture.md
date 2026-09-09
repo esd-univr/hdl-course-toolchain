@@ -101,10 +101,14 @@ been qualified against this revision".
 The toolchain reaches its consumers as GitHub artifacts, never as a checkout:
 
 ```text
-tag vX.Y.Z ──> .github/workflows/release.yml
-                 ├─ ghcr.io/esd-univr/hdl-course-toolchain:vX.Y.Z   (immutable)
-                 ├─ ghcr.io/esd-univr/hdl-course-toolchain:latest    (moves per release)
-                 └─ GitHub Release vX.Y.Z: hdl-toolchain, install.sh, uninstall.sh, SHA256SUMS
+maintainer workstation
+    make qualify   → local OCI image + .out/qualification.json  (build-input + image-ID bound to HEAD)
+    make publish   → ghcr.io/esd-univr/hdl-course-toolchain:vX.Y.Z   (immutable)
+                   → ghcr.io/esd-univr/hdl-course-toolchain:latest    (moved per release)
+                   → GitHub Release vX.Y.Z: hdl-toolchain, install.sh, uninstall.sh, SHA256SUMS
+
+GitHub Actions = lightweight repository CI only (make check, make test, shellcheck)
+GitHub / GHCR  = distribution
 ```
 
 - **Students** run `install.sh` once (`~/.local/bin/hdl-toolchain`, SHA-256
@@ -114,12 +118,16 @@ tag vX.Y.Z ──> .github/workflows/release.yml
   offline.
 - **Courses** pin `…:vX.Y.Z@sha256:…` for qualification, carried in each
   course's `toolchain-baseline.yml`.
-- The versioned image tag is never rewritten; `scripts/release.sh` and the
-  workflow both refuse a version that already has an image or a release.
+- The versioned image tag is never rewritten. `make prepare` refuses a version
+  that has *any* prior trace (tag, Release or GHCR image); `make publish` is
+  resumable — it adopts a matching partial publication and continues, and
+  aborts only on a genuine conflict (a `:vX.Y.Z` whose image is not the
+  qualified one, a tag on the wrong commit).
 
-`scripts/release.sh` does the git half (version pinning, commit, annotated
-tag); the workflow does the build, the GHCR push and the Release. The full
-runbook is [`releasing.md`](releasing.md).
+`scripts/prepare-release.sh` does the git half (version pin + `release:`
+commit); `make qualify` builds the image and records it; `scripts/publish-release.sh`
+publishes the *already-qualified* image without rebuilding. Pushing a tag
+triggers no build. The full runbook is [`releasing.md`](releasing.md).
 
 ## Runtime model
 
