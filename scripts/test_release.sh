@@ -62,6 +62,15 @@ test ! -e scripts/release.sh && ok || bad "scripts/release.sh removed"
 grep -q 'scripts/prepare-release.sh' Makefile && ok || bad "Makefile calls prepare-release.sh"
 
 echo
+echo "== workflows are lightweight only =="
+test ! -e .github/workflows/release.yml && ok || bad "release.yml deleted"
+if grep -rnE 'tags:|make build|make fetch|ghcr\.io|docker push' .github/workflows/ >/dev/null 2>&1; then
+  bad "a workflow still references heavyweight release steps" \
+      "$(grep -rnE 'tags:|make build|make fetch|ghcr\.io|docker push' .github/workflows/)"
+else ok; fi
+grep -q 'test_release.sh' Makefile && ok || bad "make test runs test_release.sh"
+
+echo
 echo "== prepare-release.sh preconditions =="
 setup_repo() {
   WORK="$(mktemp -d)"; export WORK

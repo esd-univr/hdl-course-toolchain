@@ -66,6 +66,8 @@ test: ## Run the launcher, installer and uninstaller test suites
 	@bash scripts/test_install.sh
 	@printf '\n==> uninstaller tests\n'
 	@bash scripts/test_uninstall.sh
+	@printf '\n==> release machinery tests\n'
+	@bash scripts/test_release.sh
 
 prepare: ## Pin a version and commit "release: vX.Y.Z": make prepare VERSION=vX.Y.Z
 	@test -n "$(VERSION)" || { printf 'usage: make prepare VERSION=vX.Y.Z\n' >&2; exit 2; }
