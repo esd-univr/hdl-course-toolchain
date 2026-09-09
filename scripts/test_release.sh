@@ -548,17 +548,18 @@ out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "11d origin tag confl
 has "11d origin conflict message" "$out" "origin tag v1.3.1 points at"
 teardown_repo
 
-# 11e: resume — origin already has the ANNOTATED tag on the qualified commit.
-# GitHub returns object.type == "tag" for an annotated tag, so
-# origin_tag_object_sha must dereference it via a second git/tags/<sha> call.
+# 11e: resume — origin already has the tag as an ANNOTATED tag object. GitHub
+# returns object.type == "tag" for that, so origin_tag_object_sha must
+# dereference it via a second `gh api .../git/tags/<sha>` call (release_lib.sh).
+# The gh stub models that exchange directly — no real tag object is needed in
+# the bare origin (the qualified commit is not pushed there anyway).
 setup_pub
 WANT="$(git rev-parse HEAD)"
-git tag -a v1.3.1 -m x "$WANT"                      # local tag present + correct
-git -C "$WORK/up.git" tag -a v1.3.1 -m x "$WANT"
-TAGOBJ="$(git -C "$WORK/up.git" rev-parse refs/tags/v1.3.1)"
-[ "$TAGOBJ" != "$WANT" ] && ok || bad "11e precondition: annotated tag object differs from the commit"
+git tag -a v1.3.1 -m x "$WANT"                      # local tag present + on the qualified commit
+TAGOBJ="1111111111111111111111111111111111111111"   # a stand-in annotated-tag-object sha
 cat > "$WORK/stub/gh" <<S
 #!/usr/bin/env bash
+echo "\$*" >> "$WORK/gh.log"
 case "\$*" in
   *"auth status"*) exit 0 ;;
   *"release view"*) exit 1 ;;
@@ -571,7 +572,7 @@ S
 chmod +x "$WORK/stub/gh"
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "11e annotated-tag deref resume exits 0" "$?" "0"
 has "11e sees origin already has the tag" "$out" "origin already has"
-eq "11e origin tag object untouched" "$(git -C "$WORK/up.git" rev-parse refs/tags/v1.3.1)" "$TAGOBJ"
+grep -q "git/tags/$TAGOBJ" "$WORK/gh.log" && ok || bad "11e dereferenced the annotated tag object" "$(cat "$WORK/gh.log")"
 teardown_repo
 
 echo
