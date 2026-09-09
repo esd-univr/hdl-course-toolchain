@@ -75,6 +75,12 @@ prepare_preconditions() {
         || die "HEAD is not exactly origin/main — pull/push/align main first"
     grep -qx 'VERSION="v0.0.0-dev"' install.sh \
         || die "install.sh is not at the v0.0.0-dev sentinel — a release is already half-pinned"
+    # The GHCR "unused" probe is only trustworthy with a working docker + buildx;
+    # without them a registry read failure would misread as "version unused".
+    command -v docker >/dev/null 2>&1 \
+        || die "docker not found on PATH — needed to check ${VERSION} is unused in GHCR"
+    docker buildx version >/dev/null 2>&1 \
+        || die "docker buildx is required to probe GHCR for ${VERSION}"
     if version_in_use; then
         die "version ${VERSION} is already in use (see above)"
     fi

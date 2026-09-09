@@ -95,8 +95,8 @@ order, followed by the printed evidence block.
 
 Around them:
 
-1. **First**, `rm -f .out/qualification.json` — no stale "passed" record
-   survives a re-run.
+1. **First**, `rm -f .out/qualification.json .out/publish.json` — no stale
+   "passed" record and no ledger from an earlier release survive a re-run.
 2. **Then**, before building, require `git status --porcelain` to be empty. A
    dirty tree would let uncommitted changes reach the image while
    `source_commit` still names the old HEAD, so `qualify` aborts on it.
