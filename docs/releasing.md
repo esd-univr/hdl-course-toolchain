@@ -125,6 +125,24 @@ record (§5), then publishes in this order, each step resumable (§6):
 6. assemble `SHA256SUMS`, then `gh release create vX.Y.Z --verify-tag` with the
    four assets and generated notes.
 
+`make publish` publishes the release artifacts only. It does **not** advance
+`main` or reset the tree for the next dev cycle — do that yourself once the
+Release is live (the success summary reprints these):
+
+```bash
+git push origin main          # the "release: vX.Y.Z" commit is local-only until now
+
+# hand the tree back to the dev sentinel so the next `make prepare` can run
+sed -i 's/^VERSION=.*/VERSION="v0.0.0-dev"/' install.sh uninstall.sh
+./scripts/sync-installer-digest.sh
+git commit -am "chore: back to the dev sentinel after vX.Y.Z"
+git push origin main
+```
+
+`make prepare` requires `install.sh` at `VERSION="v0.0.0-dev"` and `HEAD ==
+origin/main` exactly, so skipping this blocks the next release with a sentinel
+or sync error.
+
 ## 5. The qualification record
 
 `.out/qualification.json` (schema 1, `status: "passed"`) is written only by
@@ -187,7 +205,10 @@ For every resource, `publish` distinguishes three states:
   the qualified platform and compare the pulled image's `.Id` against the
   record's `docker_image_id`. If it matches → continue; if it differs → ABORT
   (`:vX.Y.Z` is immutable); if it cannot be pulled/inspected → ABORT rather than
-  guess.
+  guess. (This assumes the image config digest survives a push/pull round-trip,
+  which holds for the classic Docker image store. If a resume ever aborts here
+  with "different image" for a `:vX.Y.Z` you know you published, verify the
+  registry digest by hand against `.out/publish.json` before re-cutting.)
 - **`:latest`** — moved only after `:vX.Y.Z` is confirmed present; skipped if
   `:latest` already resolves to `image_digest`.
 - **Git tag** — absent → create + push. Points at `source_commit` → continue.

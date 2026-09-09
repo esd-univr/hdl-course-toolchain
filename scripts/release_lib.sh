@@ -59,6 +59,25 @@ ghcr_manifest_digest() {
         --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' | grep . || return 1
 }
 
+# Registry state of :<version>, distinguishing "absent" from "cannot
+# authenticate" (spec §4.1: a probe that cannot authenticate must abort, not
+# silently report the version as unused). Prints nothing.
+#   rc 0  the tag exists
+#   rc 1  the registry answered and the tag is absent
+#   rc 2  the probe could not authenticate / reach GHCR — caller must abort
+ghcr_tag_status() {
+    local out
+    if out="$(docker buildx imagetools inspect "$(ghcr_ref "$1")" \
+                 --format '{{json .Manifest.Digest}}' 2>&1)"; then
+        return 0
+    fi
+    case "${out}" in
+        *[Uu]nauthorized*|*denied*|*"authentication required"*|*"no basic auth"*)
+            return 2 ;;
+        *) return 1 ;;
+    esac
+}
+
 # The local image id after pulling <ref> for <platform>. Empty + return 1 when
 # the pull fails (tag absent, offline, ...).
 remote_image_id() {

@@ -28,7 +28,7 @@ LEDGER=".out/publish.json"
 # PLATFORM comes from the record so a later push targets exactly the qualified
 # platform; fall back to the default when the record is absent (the gate then
 # aborts anyway).
-PLATFORM="$(python3 -c 'import json;print(json.load(open(".out/qualification.json"))["platform"])' 2>/dev/null || echo "${PLATFORM_DEFAULT}")"
+PLATFORM="$(python3 -c "import json;print(json.load(open('${RECORD}'))['platform'])" 2>/dev/null || echo "${PLATFORM_DEFAULT}")"
 export PLATFORM
 
 # --- validation gate --------------------------------------------------------
@@ -41,7 +41,7 @@ publish_validate() {
     [ -f "${RECORD}" ] \
         || die "no qualification record (${RECORD}) — run 'make qualify' first"
 
-    local rec_ref image_id tree_clean
+    local rec_ref image_id tree_clean head_sha version_file build_fp release_fp
     rec_ref="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_ref)" \
         || die "qualification record (${RECORD}) is missing or unreadable — run 'make qualify'"
 
@@ -53,14 +53,22 @@ publish_validate() {
     tree_clean=1
     [ -z "$(git status --porcelain)" ] || tree_clean=0
 
+    # Capture each input so a failing fingerprint/`git` aborts here with its own
+    # error, not later as a misleading "qualification does not match" (set -e
+    # does not propagate a failed command substitution sitting in an arg list).
+    head_sha="$(git rev-parse HEAD)"      || die "git rev-parse HEAD failed"
+    version_file="$(cat VERSION)"         || die "cannot read VERSION"
+    build_fp="$(build_inputs_fingerprint)"   || die "could not compute the build-inputs fingerprint"
+    release_fp="$(release_inputs_fingerprint)" || die "could not compute the release-inputs fingerprint"
+
     python3 "${_DIR}/qualification.py" verify \
         --record "${RECORD}" \
         --version "${VERSION}" \
-        --version-file "$(cat VERSION)" \
-        --head "$(git rev-parse HEAD)" \
+        --version-file "${version_file}" \
+        --head "${head_sha}" \
         --tree-clean "${tree_clean}" \
-        --build-inputs-sha256 "$(build_inputs_fingerprint)" \
-        --release-inputs-sha256 "$(release_inputs_fingerprint)" \
+        --build-inputs-sha256 "${build_fp}" \
+        --release-inputs-sha256 "${release_fp}" \
         --image-id "${image_id}" \
         || die "qualification does not match the current tree / HEAD / image — re-run 'make qualify' on this commit"
 }
@@ -74,6 +82,8 @@ require_tooling() {
     command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
     command -v gh     >/dev/null 2>&1 || die "gh not found on PATH — https://cli.github.com"
     docker info >/dev/null 2>&1       || die "docker is not running / not usable"
+    docker buildx version >/dev/null 2>&1 \
+        || die "docker buildx is required — every registry read here uses 'docker buildx imagetools'"
     gh auth status >/dev/null 2>&1    || die "gh is not authenticated — run: gh auth login"
 }
 
@@ -141,7 +151,12 @@ publish_versioned_image() {
     image_id="$(docker image inspect --format '{{.Id}}' "${rec_ref}")" \
         || die "the qualified image ${rec_ref} is not present locally — run 'make qualify'"
 
-    [ -f "${LEDGER}" ] || ledger_init "${VERSION}" "$(git rev-parse HEAD)" "${ref}"
+    # A ledger from an earlier release (make qualify clears it, but a hand-kept
+    # .out survives) must not lend its digest/flags to this one. Re-init unless
+    # it is this exact version's ledger.
+    if [ ! -f "${LEDGER}" ] || [ "$(ledger_get version)" != "${VERSION}" ]; then
+        ledger_init "${VERSION}" "$(git rev-parse HEAD)" "${ref}"
+    fi
     ledger_digest="$(ledger_get image_digest)"
 
     if live_digest="$(ghcr_manifest_digest "${VERSION}" 2>/dev/null)"; then
@@ -182,7 +197,7 @@ then re-run: make publish VERSION=${VERSION}"
 # is a moving pointer, so it moves last and is re-probed afterwards to prove it
 # resolves to the exact same digest.
 publish_move_latest() {
-    local digest latest_ref live
+    local digest latest_ref live record_id
     digest="$(ledger_get image_digest)"
     [ -n "${digest}" ] \
         || die "internal: move_latest called before the versioned image was published"
@@ -194,8 +209,13 @@ publish_move_latest() {
         return 0
     fi
 
+    # Retag :latest from the qualified image id (present locally — publish_validate
+    # proved it), not from a local :vX.Y.Z name that the ledger fast-path never
+    # creates.
+    record_id="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field docker_image_id)" \
+        || die "qualification record unreadable (docker_image_id) — run 'make qualify'"
     echo "publish: moving ${latest_ref} to this release"
-    docker tag "$(ghcr_ref "${VERSION}")" "${latest_ref}"
+    docker tag "${record_id}" "${latest_ref}"
     docker push "${latest_ref}" \
         || die "push to ${latest_ref} failed — re-run: make publish VERSION=${VERSION}"
     live="$(ghcr_manifest_digest latest 2>/dev/null || true)"
@@ -291,10 +311,18 @@ publish_github_release() {
     publish_release_notes
 
     if gh release view "${VERSION}" >/dev/null 2>&1; then
-        local tn
+        local tn names a
         tn="$(gh release view "${VERSION}" --json tagName --jq .tagName 2>/dev/null || true)"
         [ "${tn}" = "${VERSION}" ] \
             || die "a GitHub Release ${VERSION} exists but is on tag '${tn}' — refusing to touch it"
+        # A create that died mid-upload leaves the Release with only some assets.
+        names="$(gh release view "${VERSION}" --json assets --jq '.assets[].name' 2>/dev/null || true)"
+        for a in hdl-toolchain install.sh uninstall.sh SHA256SUMS; do
+            printf '%s\n' "${names}" | grep -qxF "${a}" || die \
+"GitHub Release ${VERSION} exists but asset '${a}' is missing — run:
+  gh release upload ${VERSION} .out/dist/${a} --clobber
+then re-run: make publish VERSION=${VERSION}"
+        done
         echo "publish: GitHub Release ${VERSION} already created — leaving it as-is"
     else
         echo "publish: creating GitHub Release ${VERSION}"
@@ -326,6 +354,14 @@ main() {
     echo "  :latest moved:   $(ledger_get latest_moved)"
     echo "  tag published:   $(ledger_get tag_published)"
     echo "  release created: $(ledger_get release_created)"
+    cat <<EOF
+
+Still to do by hand (publish never touches the shared branch):
+  git push origin main
+  sed -i 's/^VERSION=.*/VERSION="v0.0.0-dev"/' install.sh uninstall.sh
+  ./scripts/sync-installer-digest.sh
+  git commit -am "chore: back to the dev sentinel after ${VERSION}" && git push origin main
+EOF
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

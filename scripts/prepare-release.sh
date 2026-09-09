@@ -34,7 +34,13 @@ version_in_use() {
         echo "release: a GitHub Release ${VERSION} already exists" >&2
         return 0
     fi
-    if ghcr_manifest_digest "${VERSION}" >/dev/null 2>&1; then
+    local st=0
+    ghcr_tag_status "${VERSION}" || st=$?
+    if [ "${st}" -eq 2 ]; then
+        die "cannot authenticate to $(ghcr_ref "${VERSION}") to check the version is unused — run:
+  gh auth token | docker login ghcr.io -u <github-user> --password-stdin"
+    fi
+    if [ "${st}" -eq 0 ]; then
         echo "release: $(ghcr_ref "${VERSION}") already exists in GHCR — pick the next version" >&2
         return 0
     fi
@@ -43,7 +49,11 @@ version_in_use() {
 
 prepare_already_done() {
     # HEAD is a matching release commit whose parent is origin/main, tree clean,
-    # and the version is not otherwise claimed (tag/Release/GHCR).
+    # and the version is not otherwise claimed (tag/Release/GHCR). This path
+    # already does network I/O (version_in_use), so refresh origin/main too —
+    # otherwise a main that moved upstream since the last fetch reads as
+    # "already prepared".
+    git fetch --quiet origin || true
     [ -z "$(git status --porcelain)" ] || return 1
     [ "$(git log -1 --format=%s)" = "release: ${VERSION}" ] || return 1
     [ "$(git rev-parse HEAD^)" = "$(git rev-parse origin/main)" ] || return 1
@@ -70,6 +80,16 @@ prepare_preconditions() {
     fi
 }
 
+# The four files must carry exactly this version. Called right after pinning and
+# again right before the commit, so a sub-make run in between cannot slip an
+# unpinned (or over-pinned) file into the release commit.
+verify_pins() {
+    grep -qx "LAUNCHER_VERSION=\"${BARE}\"" bin/hdl-toolchain || die "$1: bin/hdl-toolchain not pinned to ${BARE}"
+    grep -qx "VERSION=\"${VERSION}\"" install.sh || die "$1: install.sh not pinned to ${VERSION}"
+    grep -qx "VERSION=\"${VERSION}\"" uninstall.sh || die "$1: uninstall.sh not pinned to ${VERSION}"
+    [ "$(cat VERSION)" = "${BARE}" ] || die "$1: VERSION file is not ${BARE}"
+}
+
 pin_version() {
     printf '%s\n' "${BARE}" > VERSION
     sed -i.bak "s/^LAUNCHER_VERSION=\".*\"\$/LAUNCHER_VERSION=\"${BARE}\"/" bin/hdl-toolchain
@@ -77,10 +97,7 @@ pin_version() {
     sed -i.bak "s/^VERSION=\".*\"\$/VERSION=\"${VERSION}\"/" uninstall.sh
     rm -f bin/hdl-toolchain.bak install.sh.bak uninstall.sh.bak
     ./scripts/sync-installer-digest.sh
-    grep -qx "LAUNCHER_VERSION=\"${BARE}\"" bin/hdl-toolchain || die "failed to pin the launcher"
-    grep -qx "VERSION=\"${VERSION}\"" install.sh || die "failed to pin install.sh"
-    grep -qx "VERSION=\"${VERSION}\"" uninstall.sh || die "failed to pin uninstall.sh"
-    [ "$(cat VERSION)" = "${BARE}" ] || die "failed to pin VERSION"
+    verify_pins "pin"
 }
 
 main() {
@@ -94,6 +111,7 @@ main() {
     echo "prepare: running fast tests against the pinned tree"
     make --no-print-directory check
     make --no-print-directory test
+    verify_pins "pre-commit"
     git add VERSION bin/hdl-toolchain install.sh uninstall.sh
     git commit -m "release: ${VERSION}"
     cat <<EOF

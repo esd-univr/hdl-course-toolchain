@@ -118,8 +118,11 @@ GitHub / GHCR  = distribution
   offline.
 - **Courses** pin `…:vX.Y.Z@sha256:…` for qualification, carried in each
   course's `toolchain-baseline.yml`.
-- The versioned image tag is never rewritten; `make publish` refuses a version
-  that already has an image, a tag or a release.
+- The versioned image tag is never rewritten. `make prepare` refuses a version
+  that has *any* prior trace (tag, Release or GHCR image); `make publish` is
+  resumable — it adopts a matching partial publication and continues, and
+  aborts only on a genuine conflict (a `:vX.Y.Z` whose image is not the
+  qualified one, a tag on the wrong commit).
 
 `scripts/prepare-release.sh` does the git half (version pin + `release:`
 commit); `make qualify` builds the image and records it; `scripts/publish-release.sh`

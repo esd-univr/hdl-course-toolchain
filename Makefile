@@ -113,7 +113,7 @@ sif: build ## Derive the Apptainer SIF from the OCI image
 	@./scripts/build-sif.sh
 
 qualify: ## Run the full release qualification in order and record it
-	@rm -f .out/qualification.json
+	@rm -f .out/qualification.json .out/publish.json
 	@test -z "$$(git status --porcelain)" || { \
 	    printf 'qualify: working tree is dirty; commit or stash before qualifying\n' >&2; exit 1; }
 	@printf '==> 1/5 repository checks\n'

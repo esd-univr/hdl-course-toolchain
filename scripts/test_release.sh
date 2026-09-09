@@ -64,9 +64,11 @@ grep -q 'scripts/prepare-release.sh' Makefile && ok || bad "Makefile calls prepa
 echo
 echo "== workflows are lightweight only =="
 test ! -e .github/workflows/release.yml && ok || bad "release.yml deleted"
-if grep -rnE 'tags:|make build|make fetch|ghcr\.io|docker push' .github/workflows/ >/dev/null 2>&1; then
-  bad "a workflow still references heavyweight release steps" \
-      "$(grep -rnE 'tags:|make build|make fetch|ghcr\.io|docker push' .github/workflows/)"
+test -f .github/workflows/check.yml && ok || bad "check.yml (lightweight CI) is still present"
+wf_bad='tags:|on: *(release|create)|make build|make fetch|make publish|ghcr\.io|docker push|build-push-action|prepare-release|publish-release'
+if grep -rnE "$wf_bad" .github/workflows/ >/dev/null 2>&1; then
+  bad "a workflow references heavyweight release steps" \
+      "$(grep -rnE "$wf_bad" .github/workflows/)"
 else ok; fi
 grep -q 'test_release.sh' Makefile && ok || bad "make test runs test_release.sh"
 
@@ -265,7 +267,8 @@ S
     --doctor-docker pass --doctor-apptainer pass
 }
 
-# 8a: clean state validates OK (stops before any push once Task 8 is all there is)
+# 8a: a clean, matching qualification record passes the validation gate (the
+# full stubbed pipeline then runs to completion — see the 9/10/11/12 blocks)
 setup_pub
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "8a clean state exits 0" "$?" "0"
 has "8a qualification record matches" "$out" "qualification: record matches"
@@ -545,6 +548,32 @@ out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "11d origin tag confl
 has "11d origin conflict message" "$out" "origin tag v1.3.1 points at"
 teardown_repo
 
+# 11e: resume — origin already has the ANNOTATED tag on the qualified commit.
+# GitHub returns object.type == "tag" for an annotated tag, so
+# origin_tag_object_sha must dereference it via a second git/tags/<sha> call.
+setup_pub
+WANT="$(git rev-parse HEAD)"
+git tag -a v1.3.1 -m x "$WANT"                      # local tag present + correct
+git -C "$WORK/up.git" tag -a v1.3.1 -m x "$WANT"
+TAGOBJ="$(git -C "$WORK/up.git" rev-parse refs/tags/v1.3.1)"
+[ "$TAGOBJ" != "$WANT" ] && ok || bad "11e precondition: annotated tag object differs from the commit"
+cat > "$WORK/stub/gh" <<S
+#!/usr/bin/env bash
+case "\$*" in
+  *"auth status"*) exit 0 ;;
+  *"release view"*) exit 1 ;;
+  *"git/ref/tags/"*) printf '{"object":{"type":"tag","sha":"%s"}}\n' "$TAGOBJ"; exit 0 ;;
+  *"git/tags/$TAGOBJ"*) printf '%s\n' "$WANT"; exit 0 ;;   # gh --jq '.object.sha' already applied
+  *"release create"*) echo created ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "11e annotated-tag deref resume exits 0" "$?" "0"
+has "11e sees origin already has the tag" "$out" "origin already has"
+eq "11e origin tag object untouched" "$(git -C "$WORK/up.git" rev-parse refs/tags/v1.3.1)" "$TAGOBJ"
+teardown_repo
+
 echo
 echo "== publish: GitHub Release =="
 
@@ -560,6 +589,7 @@ case "\$*" in
      [ -f "\$mk" ] || exit 1
      case "\$*" in
        *"--json tagName"*) echo v1.3.1 ;;
+       *"--json assets"*) printf '%s\n' hdl-toolchain install.sh uninstall.sh SHA256SUMS ;;
        *"--json url"*) echo "https://github.com/esd-univr/hdl-course-toolchain/releases/tag/v1.3.1" ;;
        *) echo release ;;
      esac
@@ -615,6 +645,32 @@ chmod +x "$WORK/stub/gh"
 out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "12b Release on a different tag aborts" "$?"
 has "12b refuses to touch it" "$out" "refusing to touch it"
 eq "12b ledger release_created stays False" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["release_created"])')" "False"
+teardown_repo
+
+# 12c: a create that died mid-upload left the Release without one asset -> the
+# adopt path refuses to call it done and names the missing asset
+setup_pub
+cat > "$WORK/stub/gh" <<'S'
+#!/usr/bin/env bash
+case "$*" in
+  *"auth status"*) exit 0 ;;
+  *"release view"*)
+     case "$*" in
+       *"--json tagName"*) echo v1.3.1 ;;
+       *"--json assets"*) printf '%s\n' hdl-toolchain install.sh uninstall.sh ;;  # SHA256SUMS missing
+       *) echo release ;;
+     esac
+     exit 0 ;;
+  *"git/ref/tags/"*) echo '{"message":"Not Found"}'; exit 1 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "12c missing asset aborts" "$?"
+has "12c names the missing asset" "$out" "asset 'SHA256SUMS' is missing"
+has "12c gives the upload command" "$out" "gh release upload"
+eq "12c ledger release_created stays False" \
    "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["release_created"])')" "False"
 teardown_repo
 
