@@ -202,15 +202,43 @@ publish_move_latest() {
     echo "publish: ${latest_ref} -> ${digest}"
 }
 
+# --- step 3: annotated git tag on the qualified commit -----------------
+# Create the annotated tag ${VERSION} ON THE QUALIFIED source_commit (from the
+# record, not necessarily HEAD), locally then on origin — resumably. A tag that
+# already exists on the wrong commit is a hard error, never a move.
+publish_tag() {
+    local want local_sha origin_sha
+    want="$(python3 "${_DIR}/qualification.py" get --record "${RECORD}" --field source_commit)"
+
+    if local_sha="$(git rev-parse -q --verify "refs/tags/${VERSION}^{commit}" 2>/dev/null)"; then
+        [ "${local_sha}" = "${want}" ] \
+            || die "local tag ${VERSION} points at ${local_sha}, not the qualified commit ${want}"
+    else
+        echo "publish: creating annotated tag ${VERSION}"
+        git tag -a "${VERSION}" -m "hdl-course-toolchain ${VERSION}" "${want}"
+    fi
+
+    if origin_sha="$(origin_tag_object_sha "${VERSION}" 2>/dev/null)" && [ -n "${origin_sha}" ]; then
+        [ "${origin_sha}" = "${want}" ] \
+            || die "origin tag ${VERSION} points at ${origin_sha}, not ${want}"
+        echo "publish: origin already has ${VERSION}"
+    else
+        echo "publish: pushing tag ${VERSION} to origin"
+        git push origin "refs/tags/${VERSION}" \
+            || die "could not push tag ${VERSION} to origin — push it manually, then re-run make publish"
+    fi
+    ledger_set tag_published true
+}
+
 main() {
     publish_validate
     require_tooling
     echo "publish: validation OK — ${VERSION} @ $(git rev-parse --short HEAD) (${PLATFORM})"
     publish_versioned_image
     publish_move_latest
+    publish_tag
     # ---------------------------------------------------------------------
-    # Tasks 11–12 continue below this line, all AFTER the gate above:
-    #   11 — git tag ${VERSION} + push
+    # Task 12 continues below this line, all AFTER the gate above:
     #   12 — gh release create ${VERSION}
     # ---------------------------------------------------------------------
 }

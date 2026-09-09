@@ -443,6 +443,75 @@ eq "10b ledger latest_moved" \
 teardown_repo
 
 echo
+echo "== publish: git tag =="
+
+# 11a: creates + pushes the annotated tag on the qualified commit
+setup_pub
+cat > "$WORK/stub/gh" <<S
+#!/usr/bin/env bash
+case "\$*" in
+  *"auth status"*) exit 0 ;;
+  *"release view"*) exit 1 ;;
+  *"git/ref/tags/"*)
+     t="\${2##*/}"
+     if sha=\$(git -C "$WORK/up.git" rev-parse -q --verify "refs/tags/\$t^{commit}" 2>/dev/null); then
+       printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%s"}}\n' "\$t" "\$sha"
+       exit 0
+     fi
+     echo '{"message":"Not Found"}'; exit 1 ;;
+  *"release create"*) echo created ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "11a exits 0" "$?" "0"
+eq "11a local tag on the qualified commit" \
+   "$(git rev-parse 'v1.3.1^{commit}')" "$(git rev-parse HEAD)"
+eq "11a origin has the tag at that commit" \
+   "$(git -C "$WORK/up.git" rev-parse 'v1.3.1^{commit}')" "$(git rev-parse HEAD)"
+eq "11a tag is annotated" "$(git cat-file -t v1.3.1)" "tag"
+eq "11a ledger tag_published" \
+   "$(python3 -c 'import json;print(json.load(open(".out/publish.json"))["tag_published"])')" "True"
+teardown_repo
+
+# 11b: resume — local tag already on the right commit -> exit 0, no error
+setup_pub
+git tag -a v1.3.1 -m x
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; eq "11b resume with correct tag exits 0" "$?" "0"
+case "$out" in *"points at"*) bad "11b must not report a conflict" "$out" ;; *) ok ;; esac
+teardown_repo
+
+# 11c: conflict — local tag on HEAD~1 -> abort with "points at"
+setup_pub
+git tag -a v1.3.1 -m x HEAD~1
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "11c wrong local tag aborts" "$?"
+has "11c conflict message" "$out" "points at"
+teardown_repo
+
+# 11d: conflict — origin already has the tag on a different commit -> abort
+setup_pub
+cat > "$WORK/stub/gh" <<S
+#!/usr/bin/env bash
+case "\$*" in
+  *"auth status"*) exit 0 ;;
+  *"release view"*) exit 1 ;;
+  *"git/ref/tags/"*)
+     t="\${2##*/}"
+     if sha=\$(git -C "$WORK/up.git" rev-parse -q --verify "refs/tags/\$t^{commit}" 2>/dev/null); then
+       printf '{"ref":"refs/tags/%s","object":{"type":"commit","sha":"%s"}}\n' "\$t" "\$sha"
+       exit 0
+     fi
+     echo '{"message":"Not Found"}'; exit 1 ;;
+  *) exit 0 ;;
+esac
+S
+chmod +x "$WORK/stub/gh"
+git -C "$WORK/up.git" tag -a v1.3.1 -m x "$(git rev-parse HEAD~1)"
+out="$(bash scripts/publish-release.sh v1.3.1 2>&1)"; neq0 "11d origin tag conflict aborts" "$?"
+has "11d origin conflict message" "$out" "origin tag v1.3.1 points at"
+teardown_repo
+
+echo
 echo "== publish: ledger round-trips (bool + null) =="
 setup_pub
 rc=0
