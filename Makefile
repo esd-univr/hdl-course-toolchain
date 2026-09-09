@@ -98,7 +98,10 @@ export: ## Export the OCI image for Apptainer
 sif: build ## Derive the Apptainer SIF from the OCI image
 	@./scripts/build-sif.sh
 
-qualify: ## Run the full release qualification in order
+qualify: ## Run the full release qualification in order and record it
+	@rm -f .out/qualification.json
+	@test -z "$$(git status --porcelain)" || { \
+	    printf 'qualify: working tree is dirty; commit or stash before qualifying\n' >&2; exit 1; }
 	@printf '==> 1/5 repository checks\n'
 	@$(MAKE) --no-print-directory check
 	@printf '\n==> 2/5 OCI image\n'
@@ -109,6 +112,24 @@ qualify: ## Run the full release qualification in order
 	@$(MAKE) --no-print-directory sif
 	@printf '\n==> 5/5 Apptainer toolchain-doctor\n'
 	@$(MAKE) --no-print-directory doctor-sif
+	@printf '\n==> recording qualification\n'
+	@test -z "$$(git status --porcelain)" || { \
+	    printf 'qualify: tree went dirty during qualification; not recording\n' >&2; exit 1; }
+	@set -eu; . scripts/release_lib.sh; \
+	  python3 scripts/qualification.py record \
+	    --out .out/qualification.json \
+	    --version "v$$(cat VERSION)" \
+	    --source-commit "$$(git rev-parse HEAD)" \
+	    --tree-clean 1 \
+	    --build-inputs-sha256 "$$(build_inputs_fingerprint)" \
+	    --release-inputs-sha256 "$$(release_inputs_fingerprint)" \
+	    --docker-image-ref "$(IMAGE):$(TAG)" \
+	    --docker-image-id "$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}')" \
+	    --sif-path "$(SIF)" \
+	    --sif-sha256 "$$(sha256sum "$(SIF)" | cut -d' ' -f1)" \
+	    --platform "$${HDL_TOOLCHAIN_PLATFORM:-linux/amd64}" \
+	    --arch "$$(uname -m)" \
+	    --doctor-docker pass --doctor-apptainer pass
 	@printf '\n==> qualification summary\n'
 	@printf '    repository checks     PASS\n'
 	@printf '    OCI/Docker build      PASS\n'
@@ -118,9 +139,9 @@ qualify: ## Run the full release qualification in order
 	@printf '    architecture          %s\n' "$$(uname -m)"
 	@printf '    image                 %s\n' \
 	    "$$(docker image inspect $(IMAGE):$(TAG) --format '{{.Id}}' | cut -c8-19)"
-	@printf '    build inputs          %s\n' "$$(cat .out/build-inputs.docker.sha256 | cut -c1-12)"
 	@printf '    source commit         %s\n' "$$(git rev-parse HEAD)"
-	@printf '\nQualification passed. This block is the evidence for a release.\n'
+	@printf '    record                .out/qualification.json\n'
+	@printf '\nQualification passed and recorded. Run: make publish VERSION=v%s\n' "$$(cat VERSION)"
 
 clean: ## Remove generated artifacts
 	@rm -rf .out
