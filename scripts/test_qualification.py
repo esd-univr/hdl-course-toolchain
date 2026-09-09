@@ -3,6 +3,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 QUAL = HERE / "qualification.py"
+sys.path.insert(0, str(HERE))
+import qualification
 
 def run(*args):
     return subprocess.run([sys.executable, str(QUAL), *args],
@@ -102,6 +104,19 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("run 'make qualify'", r.stdout + r.stderr)
 
+    def test_verify_version_arg_mismatch(self):
+        with tempfile.TemporaryDirectory() as t:
+            rec = self._record(t)
+            r = run(*self._verify_args(rec, version="v9.9.9"))
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("version mismatch", r.stdout + r.stderr)
+
+    def test_verify_version_file_mismatch(self):
+        with tempfile.TemporaryDirectory() as t:
+            rec = self._record(t)
+            r = run(*self._verify_args(rec, version_file="9.9.9"))
+            self.assertEqual(r.returncode, 1)
+
 
 class GetTests(unittest.TestCase):
     def test_get_field(self):
@@ -112,20 +127,21 @@ class GetTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0)
             self.assertEqual(r.stdout.strip(), "a" * 40)
 
+    def test_get_unknown_field(self):
+        with tempfile.TemporaryDirectory() as t:
+            out = Path(t) / "q.json"
+            run(*record_args(out))
+            r = run("get", "--record", str(out), "--field", "nonexistent")
+            self.assertEqual(r.returncode, 2)
+
 
 class LoadTests(unittest.TestCase):
     def test_load_missing_file(self):
-        import sys, os
-        sys.path.insert(0, str(HERE))
-        import qualification
         with self.assertRaises(qualification.QualificationError) as ctx:
             qualification.load("/nonexistent/q.json")
         self.assertIn("run 'make qualify'", str(ctx.exception))
 
     def test_load_non_dict_json(self):
-        import sys
-        sys.path.insert(0, str(HERE))
-        import qualification
         with tempfile.TemporaryDirectory() as t:
             out = Path(t) / "q.json"
             out.write_text("123")
@@ -134,9 +150,6 @@ class LoadTests(unittest.TestCase):
             self.assertIn("not a JSON object", str(ctx.exception))
 
     def test_load_wrong_schema(self):
-        import sys
-        sys.path.insert(0, str(HERE))
-        import qualification
         with tempfile.TemporaryDirectory() as t:
             out = Path(t) / "q.json"
             out.write_text('{"schema": 999, "status": "passed"}')
@@ -145,9 +158,6 @@ class LoadTests(unittest.TestCase):
             self.assertIn("schema", str(ctx.exception))
 
     def test_load_not_passed(self):
-        import sys
-        sys.path.insert(0, str(HERE))
-        import qualification
         with tempfile.TemporaryDirectory() as t:
             out = Path(t) / "q.json"
             out.write_text('{"schema": 1, "status": "failed"}')

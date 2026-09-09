@@ -50,6 +50,10 @@ _VERIFY_FIELDS = [
 ]
 
 
+def _strip_v(s: str) -> str:
+    return s[1:] if s.startswith("v") else s
+
+
 def cmd_verify(a: argparse.Namespace) -> int:
     try:
         rec = load(a.record)
@@ -67,10 +71,14 @@ def cmd_verify(a: argparse.Namespace) -> int:
     }
     bad = 0
     for rec_key, cli_key in _VERIFY_FIELDS:
-        want, got = rec[rec_key], now[cli_key]
-        if cli_key == "version_file":
-            got = "v" + got
-        if want != got:
+        want = rec.get(rec_key)
+        got = now[cli_key]
+        if want is None:
+            bad += 1
+            print(f"qualification: record missing field {rec_key!r}", file=sys.stderr)
+            continue
+        want_norm, got_norm = _strip_v(want), _strip_v(got)
+        if want_norm != got_norm:
             bad += 1
             label = "source_commit" if cli_key == "head" else (
                 "docker_image_id" if cli_key == "image_id" else rec_key)
@@ -91,7 +99,11 @@ def cmd_verify(a: argparse.Namespace) -> int:
 
 
 def cmd_get(a: argparse.Namespace) -> int:
-    rec = load(a.record)
+    try:
+        rec = load(a.record)
+    except QualificationError as exc:
+        print(f"qualification: {exc}", file=sys.stderr)
+        return 1
     if a.field not in rec:
         print(f"qualification: no field {a.field!r}", file=sys.stderr)
         return 2
