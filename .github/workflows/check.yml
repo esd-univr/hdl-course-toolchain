@@ -29,5 +29,10 @@ jobs:
       - name: Shellcheck launcher, installer, uninstaller and scripts
         run: shellcheck -S warning bin/hdl-toolchain install.sh uninstall.sh scripts/*.sh
 
+      - name: Configure Git identity for integration-test fixtures
+        run: |
+          git config --global user.email "ci@localhost"
+          git config --global user.name "CI"
+
       - name: Launcher and installer tests
         run: make test
