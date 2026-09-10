@@ -27,7 +27,7 @@
 #   notes         reproducibility caveats and rationale
 
 manifest_version: 1
-recorded: 2026-08-19
+recorded: 2026-09-10
 
 tools:
   # --- base environment -------------------------------------------------------
@@ -41,6 +41,24 @@ tools:
     notes: >
       Ubuntu 22.04 is retained because the available OpenROAD binary package
       depends on Python 3.10 and the pre-t64 Qt5 package names used by jammy.
+
+  - name: build-cmake
+    arg: BUILD_CMAKE_VERSION
+    version: "3.31.1"
+    source: https://cmake.org
+    upstream: github-release:Kitware/CMake
+    arch: "build-time only; shared by the Yosys and HARM builders"
+    notes: >
+      Yosys 0.69 requires CMake 3.28 or newer and HARM v3 requires CMake 3.30
+      or newer. Ubuntu 22.04 ships an older CMake, so one pinned source build is
+      shared by both stages and does not reach the runtime image.
+
+  - name: build-cmake-archive
+    arg: BUILD_CMAKE_SHA256
+    version: "c4fc2a9bd0cd5f899ccb2fb81ec422e175090bc0de5d90e906dd453b53065719"
+    source: SHA-256 published for CMake 3.31.1
+    archive_url: https://cmake.org/files/v3.31/cmake-3.31.1.tar.gz
+    archive_file: build-cmake.tar.gz
 
   # --- simulation and synthesis ---------------------------------------------
 
@@ -62,41 +80,64 @@ tools:
 
   - name: verilator
     arg: VERILATOR_REF
-    version: "v5.050"
+    version: "v5.052"
     source: https://github.com/verilator/verilator
     upstream: github-tag:verilator/verilator
-    arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
+    arch: "linux/amd64 verified at v5.050; linux/arm64 supported upstream but not yet qualified here"
     notes: >
       Built from source because Ubuntu 22.04 packages Verilator 4.038, which is
-      too old for the pinned cocotb 2.x environment.
+      too old for the pinned cocotb 2.x environment. v5.052 is pending local
+      qualification by the course doctor and teaching tests.
 
   - name: verilator-archive
     arg: VERILATOR_SHA256
-    version: "ec6723f30c1798b1fbbbed97364f09c431fb4875577c314f37240e99b60a4a04"
+    version: "8c8d2e11e6ad32f641dd250742a94195ddecb912e2e2dabe2f42ddbbb99c1092"
     source: SHA-256 of the Verilator source archive
-    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.050.tar.gz
+    archive_url: https://github.com/verilator/verilator/archive/refs/tags/v5.052.tar.gz
     archive_file: verilator.tar.gz
 
   - name: yosys
     arg: YOSYS_REF
-    version: "v0.66"
+    version: "v0.69"
     source: https://github.com/YosysHQ/yosys
     upstream: github-release:YosysHQ/yosys
-    arch: "linux/amd64 verified; linux/arm64 supported upstream but not yet qualified here"
+    arch: "linux/amd64 verified at v0.66; linux/arm64 supported upstream but not yet qualified here"
     notes: >
-      v0.66 is the last Makefile-based release compatible with the Ubuntu 22.04
-      baseline without introducing a newer CMake/Python toolchain. Its release
-      archive vendors ABC.
+      v0.69 uses the CMake build introduced after v0.66 and requires a modern
+      compiler. The builder uses a dedicated Clang/Python/CMake toolchain while
+      the runtime remains on the Ubuntu 22.04 baseline for OpenROAD compatibility.
 
   - name: yosys-archive
     arg: YOSYS_SHA256
-    version: "ba567ea7fbb1287e996aef8f20fe902f6fd408593aa50cfaea8ae0c9015ab872"
-    source: SHA-256 of the Yosys release archive
-    archive_url: https://github.com/YosysHQ/yosys/releases/download/v0.66/yosys-src.tar.gz
+    version: "6dad6412cae417f5a53e2c943c2aee160162cfc1bdd31669230da1b7e3522571"
+    source: SHA-256 published by GitHub for the Yosys 0.69 vendored release archive
+    archive_url: https://github.com/YosysHQ/yosys/releases/download/v0.69/yosys.tar.gz
     archive_file: yosys.tar.gz
     notes: >
-      The release archive is flat; the Containerfile intentionally does not
-      strip a leading directory when unpacking it.
+      The release archive vendors the required submodules and is flat; the
+      Containerfile intentionally does not strip a leading directory.
+
+  - name: yosys-build-clang
+    arg: YOSYS_CLANG_VERSION
+    version: "16"
+    source: https://apt.llvm.org/jammy/
+    upstream: manual
+    arch: "build-time only; apt.llvm.org publishes linux/amd64 and linux/arm64 packages"
+    notes: >
+      Yosys 0.67 and newer require at least Clang 16 or GCC 13. The versioned
+      LLVM Jammy channel is used only in builder-eda; it does not alter the
+      compiler installed in the runtime image.
+
+  - name: yosys-build-python
+    arg: YOSYS_PYTHON_APT_VERSION
+    version: "3.11.0~rc1-1~22.04.1"
+    source: ubuntu-22.04 archive
+    upstream: ubuntu:jammy/python3.11
+    arch: "build-time only; linux/amd64 and linux/arm64"
+    notes: >
+      Yosys 0.69 documents Python 3.11 or newer as a build prerequisite.
+      Python 3.11 is installed only in builder-eda; the course runtime remains
+      on Python 3.10 for its existing OpenROAD and package compatibility.
 
   # --- runtime and visualization --------------------------------------------
 
@@ -310,22 +351,6 @@ tools:
     source: SHA-256 of the pinned HARM v3 source archive
     archive_url: https://github.com/SamueleGerminiani/harm/archive/e1586205e693826ff5b84f4e7097b3cff7e1025c.tar.gz
     archive_file: harm.tar.gz
-
-  - name: harm-cmake
-    arg: HARM_CMAKE_VERSION
-    version: "3.31.1"
-    source: https://cmake.org
-    upstream: github-release:Kitware/CMake
-    arch: "build-time only; built from source"
-    notes: >
-      HARM v3 requires CMake 3.30 or newer; Ubuntu 22.04 ships an older CMake.
-
-  - name: harm-cmake-archive
-    arg: HARM_CMAKE_SHA256
-    version: "c4fc2a9bd0cd5f899ccb2fb81ec422e175090bc0de5d90e906dd453b53065719"
-    source: SHA-256 published for CMake 3.31.1
-    archive_url: https://cmake.org/files/v3.31/cmake-3.31.1.tar.gz
-    archive_file: harm-cmake.tar.gz
 
   - name: harm-antlr4
     arg: HARM_ANTLR_VERSION
