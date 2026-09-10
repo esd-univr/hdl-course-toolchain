@@ -157,7 +157,7 @@ tools:
 
   - name: vcdtui
     arg: VCDTUI_REF
-    version: "v0.5.0"
+    version: "v0.7.1"
     source: https://github.com/Galfurian/vcdtui
     upstream: github-release:Galfurian/vcdtui
     arch: "pure Python; architecture independent"
@@ -176,9 +176,9 @@ tools:
 
   - name: vcdtui-archive
     arg: VCDTUI_SHA256
-    version: "c86671f9d59159629f11fa3f759ba661700523d25a08313a4140a42f633e851d"
-    source: SHA-256 of the vcdtui v0.5.0 release source archive
-    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.5.0.tar.gz
+    version: "36ea5b62471796514a8492ed08ac3f1ea862ab462c2d7a9f24b6bc302f8a9c16"
+    source: SHA-256 of the vcdtui v0.7.1 release source archive
+    archive_url: https://github.com/Galfurian/vcdtui/archive/refs/tags/v0.7.1.tar.gz
     archive_file: vcdtui.tar.gz
     arch: "source; architecture independent"
 
