@@ -35,6 +35,29 @@ RUN apt-get update \
 RUN mkdir -p /opt/toolchain/bin /opt/toolchain/status /opt/toolchain/report
 
 # -----------------------------------------------------------------------------
+# Stage: builder-cmake -- pinned modern CMake shared by Yosys and HARM.
+# -----------------------------------------------------------------------------
+FROM base AS builder-cmake
+ARG BUILD_CMAKE_VERSION
+ARG BUILD_CMAKE_SHA256
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY container/fetch.sh /usr/local/bin/fetch.sh
+COPY .out/sources/build-cmake.tar.gz /src/archives/build-cmake.tar.gz
+RUN chmod 0755 /usr/local/bin/fetch.sh \
+ && fetch.sh --local "${BUILD_CMAKE_SHA256}" \
+        /src/archives/build-cmake.tar.gz /src/cmake --strip-components=1 \
+ && cd /src/cmake \
+ && ./bootstrap --prefix=/opt/cmake \
+ && make -j"$(nproc)" \
+ && make install \
+ && /opt/cmake/bin/cmake --version | grep -F "cmake version ${BUILD_CMAKE_VERSION}"
+
+# -----------------------------------------------------------------------------
 # Stage: builder-eda -- simulation and synthesis tools built from source.
 # -----------------------------------------------------------------------------
 FROM base AS builder-eda
@@ -44,14 +67,35 @@ ARG YOSYS_REF
 ARG IVERILOG_SHA256
 ARG VERILATOR_SHA256
 ARG YOSYS_SHA256
+ARG YOSYS_CLANG_VERSION
+ARG YOSYS_PYTHON_APT_VERSION
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        build-essential autoconf automake gperf flex bison \
+        build-essential autoconf automake gawk gperf flex bison \
         libfl-dev libreadline-dev zlib1g-dev libffi-dev \
-        tcl-dev pkg-config help2man perl python3-dev \
+        tcl-dev pkg-config help2man perl python3-dev gnupg \
+        "python3.11=${YOSYS_PYTHON_APT_VERSION}" \
  && rm -rf /var/lib/apt/lists/*
 # libfl-dev, not flex, ships FlexLexer.h on Ubuntu; Verilator needs it.
+
+# Yosys 0.67+ requires Clang >=16 or GCC >=13. Keep the newer compiler scoped
+# to this build stage so the Jammy runtime and OpenROAD ABI remain unchanged.
+RUN set -eu; \
+    curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /tmp/llvm.gpg.asc; \
+    fingerprint="$(gpg --show-keys --with-colons /tmp/llvm.gpg.asc \
+        | awk -F: '$1 == "fpr" { print $10; exit }')"; \
+    [ "${fingerprint}" = "6084F3CF814B57C1CF12EFD515CF4D18AF4F7421" ]; \
+    gpg --dearmor -o /usr/share/keyrings/apt.llvm.org.gpg /tmp/llvm.gpg.asc; \
+    rm /tmp/llvm.gpg.asc; \
+    printf 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-%s main\n' \
+        "${YOSYS_CLANG_VERSION}" > /etc/apt/sources.list.d/llvm.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends "clang-${YOSYS_CLANG_VERSION}"; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder-cmake /opt/cmake/ /opt/cmake/
+ENV PATH=/opt/cmake/bin:${PATH}
 
 COPY container/fetch.sh /usr/local/bin/fetch.sh
 RUN chmod 0755 /usr/local/bin/fetch.sh
@@ -81,12 +125,20 @@ RUN fetch.sh --local "${VERILATOR_SHA256}" /src/archives/verilator.tar.gz \
  && make -j"$(nproc)" \
  && make DESTDIR=/dest install
 
-# Yosys uses the release archive that vendors ABC. The archive is flat and must
-# not have a leading path component stripped.
+# Yosys uses the vendored release archive. It is flat and must not have a
+# leading path component stripped. A build-only Python 3.11 and Clang toolchain
+# satisfy the current upstream prerequisites without changing the runtime.
 RUN fetch.sh --local "${YOSYS_SHA256}" /src/archives/yosys.tar.gz /src/yosys \
- && cd /src/yosys \
- && make -j"$(nproc)" PREFIX=/usr/local \
- && make install PREFIX=/usr/local DESTDIR=/dest
+ && cmake -S /src/yosys -B /src/yosys/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_C_COMPILER="clang-${YOSYS_CLANG_VERSION}" \
+        -DCMAKE_CXX_COMPILER="clang++-${YOSYS_CLANG_VERSION}" \
+        -DPython3_EXECUTABLE=/usr/bin/python3.11 \
+        -DYOSYS_ENABLE_UNIT_TESTS=OFF \
+        -DYOSYS_USE_BUNDLED_LIBS=ON \
+ && cmake --build /src/yosys/build -j"$(nproc)" \
+ && DESTDIR=/dest cmake --install /src/yosys/build
 
 # -----------------------------------------------------------------------------
 # Stage: builder-hif -- coordinated HIF baseline from pinned source archives.
@@ -165,8 +217,7 @@ RUN { \
 FROM base AS builder-harm
 ARG HARM_REF
 ARG HARM_SHA256
-ARG HARM_CMAKE_VERSION
-ARG HARM_CMAKE_SHA256
+ARG BUILD_CMAKE_VERSION
 ARG HARM_ANTLR_VERSION
 ARG HARM_ANTLR_SHA256
 ARG HARM_SPOT_VERSION
@@ -179,15 +230,16 @@ RUN apt-get update \
         build-essential pkg-config uuid-dev unzip python3-dev libssl-dev \
  && rm -rf /var/lib/apt/lists/*
 
+COPY --from=builder-cmake /opt/cmake/ /opt/cmake/
+ENV PATH=/opt/cmake/bin:${PATH}
+
 COPY container/fetch.sh /usr/local/bin/fetch.sh
-COPY .out/sources/harm.tar.gz .out/sources/harm-cmake.tar.gz \
+COPY .out/sources/harm.tar.gz \
      .out/sources/harm-antlr4.zip .out/sources/harm-spot.tar.gz \
      .out/sources/harm-boost.tar.gz /src/archives/
 RUN chmod 0755 /usr/local/bin/fetch.sh \
  && fetch.sh --local "${HARM_SHA256}" \
         /src/archives/harm.tar.gz /src/harm --strip-components=1 \
- && fetch.sh --local "${HARM_CMAKE_SHA256}" \
-        /src/archives/harm-cmake.tar.gz /src/cmake --strip-components=1 \
  && fetch.sh --local "${HARM_SPOT_SHA256}" \
         /src/archives/harm-spot.tar.gz /src/spot --strip-components=1 \
  && fetch.sh --local "${HARM_BOOST_SHA256}" \
@@ -196,13 +248,6 @@ RUN chmod 0755 /usr/local/bin/fetch.sh \
  && [ "${actual}" = "${HARM_ANTLR_SHA256}" ] \
  && mkdir -p /src/antlr4 \
  && unzip -q /src/archives/harm-antlr4.zip -d /src/antlr4
-
-# HARM v3 requires CMake >= 3.30, newer than Ubuntu 22.04 provides.
-RUN cd /src/cmake \
- && ./bootstrap --prefix=/opt/cmake \
- && make -j"$(nproc)" \
- && make install
-ENV PATH=/opt/cmake/bin:${PATH}
 
 # Install the exact dependency versions into the layout expected by HARM's
 # custom Find*.cmake modules.
@@ -237,7 +282,7 @@ RUN cmake -S /src/harm -B /src/harm/build -DCMAKE_BUILD_TYPE=Release \
     fi \
  && { \
       echo "harm   ${HARM_REF}"; \
-      echo "cmake  ${HARM_CMAKE_VERSION}"; \
+      echo "cmake  ${BUILD_CMAKE_VERSION}"; \
       echo "antlr4 ${HARM_ANTLR_VERSION}"; \
       echo "spot   ${HARM_SPOT_VERSION}"; \
       echo "boost  ${HARM_BOOST_VERSION}"; \
