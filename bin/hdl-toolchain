@@ -14,7 +14,7 @@
 set -euo pipefail
 
 DEFAULT_IMAGE="ghcr.io/esd-univr/hdl-course-toolchain"
-LAUNCHER_VERSION="1.3.1"
+LAUNCHER_VERSION="1.4.0"
 
 # A misspelled HDL_TOOLCHAIN_* variable used to be ignored in silence, so a
 # request for one engine could run in the other and still report success.
