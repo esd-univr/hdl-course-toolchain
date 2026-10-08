@@ -502,6 +502,14 @@ RUN for tool in iverilog vvp verilator yosys ngspice quaigh muffin harm vcdtui \
 
 COPY --from=builder-shell /opt/oh-my-zsh/ /opt/oh-my-zsh/
 
+# A real account for Dev Containers / Codespaces (remoteUser: student). There is
+# deliberately no USER instruction: the image still defaults to root, and
+# bin/hdl-toolchain still runs it as the host uid/gid through nss_wrapper (see
+# entrypoint.sh). The shell is bash because the zsh setup is located through
+# ZDOTDIR, which only profile.sh sets; login shells source it from profile.d.
+RUN useradd --create-home --uid 1000 --user-group --shell /bin/bash student \
+ && install -d -o student -g student /home/student/.toolchain
+
 COPY container/profile.sh /etc/profile.d/hdl-course-toolchain.sh
 RUN mkdir -p /opt/toolchain/zsh
 COPY container/zshrc /opt/toolchain/zsh/.zshrc

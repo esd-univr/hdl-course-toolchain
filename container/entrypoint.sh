@@ -22,17 +22,20 @@ fi
 # The container runs with the invoking user's numeric uid/gid so generated
 # files remain owned by the student on the host.  Those ids normally have no
 # names inside the immutable image.  nss_wrapper provides a synthetic
-# `student` identity without modifying /etc/passwd or /etc/group.
+# `student` identity without modifying /etc/passwd or /etc/group.  The image
+# also has a real `student` (uid/gid 1000, for Dev Containers); it is dropped
+# from the copies so that the synthetic one is the only account of that name.
 if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
     nss_dir="${TMPDIR:-/tmp}/nss"
     mkdir -p "${nss_dir}"
-    cp /etc/passwd "${nss_dir}/passwd"
+    grep -v '^student:' /etc/passwd > "${nss_dir}/passwd"
     cp /etc/group "${nss_dir}/group"
 
     printf 'student:x:%s:%s:Course student:%s:/bin/bash\n' \
         "$(id -u)" "$(id -g)" "${HOME}" >> "${nss_dir}/passwd"
 
     if ! getent group "$(id -g)" >/dev/null 2>&1; then
+        sed -i '/^student:/d' "${nss_dir}/group"
         printf 'student:x:%s:\n' "$(id -g)" >> "${nss_dir}/group"
     fi
 
