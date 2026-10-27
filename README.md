@@ -43,6 +43,10 @@ make shell
 The launcher mounts the selected workspace at `/work` and disables network
 access by default.
 
+On a host that enforces SELinux, such as Fedora, the launcher mounts the workspace
+with the `:z` label, so the container can read and write it. Other hosts are
+unaffected.
+
 ## Consuming the toolchain
 
 Students do **not** clone this repository. Each release publishes:

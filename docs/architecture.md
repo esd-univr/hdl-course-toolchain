@@ -134,6 +134,8 @@ triggers no build. The full runbook is [`releasing.md`](releasing.md).
 Docker and Apptainer are normalized through `bin/hdl-toolchain`:
 
 - the selected workspace is mounted at `/work`;
+- on a host that enforces SELinux, the Docker mount carries the `:z` label,
+  because without it every operation in `/work` is refused;
 - network access is disabled by default;
 - generated files remain owned by the invoking user where supported;
 - scratch/cache state lives under `.toolchain/` in the workspace;

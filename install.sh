@@ -21,7 +21,7 @@ set -u
 
 # --- pinned by scripts/release.sh when a release is cut -------------------
 VERSION="v0.0.0-dev"
-SHA256="21919009406786534c5a845a251cf64c82bddd675c6f1b1f15cc0f185eee3021"
+SHA256="919c0f562be64231071fd06e9c96c42bfc4d4093bcfc51d680deb9326605c78e"
 # ------------------------------------------------------------------------
 
 REPO="esd-univr/hdl-course-toolchain"

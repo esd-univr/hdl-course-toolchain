@@ -212,6 +212,23 @@ identify_docker() {
         "${id#sha256:}" "${created:-?}" "${PLATFORM:-native}" >&2
 }
 
+# On a host that enforces SELinux (Fedora and its relatives, and Docker or Podman
+# there), a bind mount is unreadable from inside the container unless it carries
+# a label the container may use, and every operation in /work then fails with
+# "permission denied". The `:z` volume option relabels the workspace for that.
+# Docker's --mount has no such option, so the volume form is used on those hosts
+# only, and the rest keep --mount. A host without SELinux never reaches either
+# command.
+selinux_enforcing() {
+    local mode=""
+    if command -v getenforce >/dev/null 2>&1; then
+        mode="$(getenforce 2>/dev/null || true)"
+    elif [ -r /sys/fs/selinux/enforce ]; then
+        [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = "1" ] && mode="Enforcing"
+    fi
+    [ "${mode}" = "Enforcing" ]
+}
+
 SCRATCH="${WORKSPACE}/.toolchain"
 mkdir -p \
     "${SCRATCH}/tmp" \
@@ -237,6 +254,18 @@ docker)
     [ "${ALLOW_NETWORK}" = "no" ] || network=()
     tty=()
     [ -t 0 ] && [ -t 1 ] && tty=(-t)
+    workspace_mount=(--mount "type=bind,source=${WORKSPACE},target=/work")
+    if selinux_enforcing; then
+        case "${WORKSPACE}" in
+            *:*)
+                echo "error: SELinux is enforcing, and a workspace path containing ':' cannot be" >&2
+                echo "       mounted with a label. Use a path without a colon: ${WORKSPACE}" >&2
+                exit 2
+                ;;
+        esac
+        note "SELinux is enforcing: the workspace is mounted with the :z label"
+        workspace_mount=(--volume "${WORKSPACE}:/work:z")
+    fi
     exec "${DOCKER}" run --rm -i ${tty[@]+"${tty[@]}"} \
         ${platform_args[@]+"${platform_args[@]}"} \
         ${network[@]+"${network[@]}"} \
@@ -245,7 +274,7 @@ docker)
         --tmpfs /tmp:rw,nosuid,nodev,exec \
         --tmpfs /var/tmp:rw,nosuid,nodev \
         --user "$(id -u):$(id -g)" \
-        --mount "type=bind,source=${WORKSPACE},target=/work" \
+        "${workspace_mount[@]}" \
         --workdir /work \
         --env HOME=/work \
         "${runtime_env[@]}" \

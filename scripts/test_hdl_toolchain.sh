@@ -173,6 +173,44 @@ has "daemon/missing binary explains" "$out" "not found on PATH"
 has "daemon/missing binary does not offer to install docker" "$out" "does not install Docker"
 teardown
 
+# --- SELinux ----------------------------------------------------------
+# A stub getenforce is put first on PATH, so the result never depends on the
+# machine running the tests.
+selinux_as() {
+    mkdir -p "${STUB_HOME}/bin"
+    printf '#!/usr/bin/env bash\necho %s\n' "$1" > "${STUB_HOME}/bin/getenforce"
+    chmod +x "${STUB_HOME}/bin/getenforce"
+    export PATH="${STUB_HOME}/bin:${PATH}"
+}
+SAVED_PATH="${PATH}"
+
+setup; touch "${STUB_HOME}/has_image"; selinux_as Enforcing
+out="$(launch --workspace ws -- true)"; rc=$?
+eq     "selinux/enforcing runs" "$rc" "0"
+has    "selinux/enforcing mounts the workspace with :z" "$(run_log)" ":/work:z"
+hasnot "selinux/enforcing does not use --mount" "$(run_log)" "--mount"
+has    "selinux/enforcing says so" "$out" "SELinux is enforcing"
+teardown; PATH="${SAVED_PATH}"
+
+setup; touch "${STUB_HOME}/has_image"; selinux_as Permissive
+launch --workspace ws -- true >/dev/null
+has    "selinux/permissive keeps --mount" "$(run_log)" "--mount type=bind"
+hasnot "selinux/permissive adds no label" "$(run_log)" ":z"
+teardown; PATH="${SAVED_PATH}"
+
+setup; touch "${STUB_HOME}/has_image"; selinux_as Disabled
+launch --workspace ws -- true >/dev/null
+has    "selinux/disabled keeps --mount" "$(run_log)" "--mount type=bind"
+hasnot "selinux/disabled adds no label" "$(run_log)" ":z"
+teardown; PATH="${SAVED_PATH}"
+
+setup; touch "${STUB_HOME}/has_image"; selinux_as Enforcing; mkdir -p "${STUB_HOME}/a:b"
+out="$(launch --workspace "a:b" -- true)"; rc=$?
+eq  "selinux/colon in the workspace path is refused" "$rc" "2"
+has "selinux/colon in the workspace path explains" "$out" "without a colon"
+hasnot "selinux/colon in the workspace path starts nothing" "$(run_log)" "run "
+teardown; PATH="${SAVED_PATH}"
+
 echo
 echo "passed: ${PASS}   failed: ${FAIL}"
 [ "${FAIL}" -eq 0 ]
